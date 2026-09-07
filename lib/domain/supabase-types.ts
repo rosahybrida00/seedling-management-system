@@ -1,6 +1,7 @@
 // ---------------------------------------------------------------------------
 // Types métier Supabase — complètent les types existants (types.ts)
 // pour le Catalogue des rosiers, le Profil, les Paramètres et les Capteurs.
+// Les noms de champs correspondent exactement aux colonnes SQL (snake_case).
 // ---------------------------------------------------------------------------
 
 /** Catégorie de rosier dans le catalogue. */
@@ -25,78 +26,78 @@ export interface Rose {
   obtenteur: string | null
   type: string | null
   parentage: string | null
-  photoUrl: string | null
+  photo_url: string | null
   description: string | null
   category: RoseCategory
-  userId: string | null
-  createdAt: string
-  updatedAt: string
+  user_id: string | null
+  created_at: string
+  updated_at: string
 }
 
 /** Profil professionnel de l'hybrideur. */
 export interface Profile {
   id: string
-  obtenteurName: string | null
+  obtenteur_name: string | null
   affixe: string | null
   siret: string | null
   city: string | null
-  postalCode: string | null
+  postal_code: string | null
   address: string | null
-  avatarUrl: string | null
+  avatar_url: string | null
   subscription: "free" | "pro"
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 /** Préférences et seuils d'alerte. */
 export interface UserSettings {
   id: string
   theme: "botanical" | "dark" | "light"
-  frostThreshold: number
-  heatThreshold: number
+  frost_threshold: number
+  heat_threshold: number
   units: "metric" | "imperial"
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 /** Capteur IoT appairé en serre. */
 export interface Sensor {
   id: string
-  userId: string
-  greenhouseId: string | null
+  user_id: string
+  greenhouse_id: string | null
   name: string
-  sensorType: string | null
-  lastValue: number | null
-  lastReadingAt: string | null
-  isActive: boolean
-  createdAt: string
-  updatedAt: string
+  sensor_type: string | null
+  last_value: number | null
+  last_reading_at: string | null
+  is_active: boolean
+  created_at: string
+  updated_at: string
 }
 
 /** Lot de pollen (récolte, évaluation, congélation). */
 export interface PollenLot {
   id: string
-  userId: string
-  lotNumber: string
-  roseName: string | null
-  antherQuality: string | null
+  user_id: string
+  lot_number: string
+  rose_name: string | null
+  anther_quality: string | null
   dehiscence: string | null
-  conservationMode: string | null
+  conservation_mode: string | null
   remarks: string
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 /** Message de support B2B. */
 export interface SupportMessage {
   id: string
-  userId: string | null
+  user_id: string | null
   subject: string | null
   category: "technical" | "billing" | "dho" | "partnership"
   message: string
-  attachmentUrl: string | null
+  attachment_url: string | null
   status: "open" | "in_progress" | "resolved"
-  createdAt: string
+  created_at: string
 }
 
 /** Données météo affichées dans le bandeau. */

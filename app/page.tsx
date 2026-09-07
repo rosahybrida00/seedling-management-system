@@ -35,7 +35,7 @@ export default function CatalogPage() {
       .select("*")
       .order("name")
     if (!error && data) {
-      setRoses(data as unknown as Rose[])
+      setRoses(data as Rose[])
     }
     setLoading(false)
   }
@@ -244,9 +244,9 @@ function RoseCard({ rose }: { rose: Rose }) {
   return (
     <Card className="overflow-hidden transition-shadow hover:shadow-md">
       <div className="relative aspect-[4/3] bg-muted">
-        {rose.photoUrl ? (
+        {rose.photo_url ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={rose.photoUrl} alt={rose.name} className="size-full object-cover" />
+          <img src={rose.photo_url} alt={rose.name} className="size-full object-cover" />
         ) : (
           <div className="flex size-full items-center justify-center bg-primary/5">
             <Flower2 className="size-10 text-primary/30" />
