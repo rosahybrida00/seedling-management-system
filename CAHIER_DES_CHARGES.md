@@ -168,3 +168,28 @@ Analyse annuelle consolidée pour chaque variété utilisée en parent Mâle ou 
 * **Formulaire de Support** : Routage par motif (*Support technique*, *Question Facturation*, *Licences DHO*, *Partenariat*).
 * **Formulaire d'Envoi** : Saisie du message avec possibilité d'attacher une capture d'écran ou un log.
 * **Centre d'Aide & FAQ** : Guides intégrés sur la nomenclature `Aa1-2026-001` et l'exportation des dossiers DHO.
+---
+
+## 9. Feuille de Route & Méthodologie d'Implémentation (Découpage en 3 Phases)
+
+Pour garantir une stabilité système optimale, un respect strict de la mémoire du projet et une intégration sans régression, l'implémentation est découpée en 3 étapes de développement séquentielles :
+
+### Phase 1 : Socle Architectural, Authentification & Navigation Base
+* Configuration des schémas Supabase (Tables SQL, politiques Row Level Security - RLS).
+* Mise en place de Supabase Auth (E-mail / Mot de passe avec autofill clavier et récupération de mot de passe).
+* Intégration du bandeau météo universel (Géolocalisation GPS + Fallback Ville profil) et connectivité capteurs.
+* Layout global, menu supérieur et structure de la page d'accueil (`/`) — Catalogue des Rosiers.
+* Pages de profil utilisateur (Fiche hybrideur, SIRET, Ville), Paramètres et Support Contact B2B.
+
+### Phase 2 : Métier Terrain, Nomenclature & Formulaires Contextuels
+* Génération automatique du code unique de traçabilité : `[Code_Croisement]-[Année]-[Séquence]` (ex: `Aa1-2026-001`).
+* Formulaire à cases à cocher contextuelles du **Module Pollen** (Récolte, Déhiscence, Congélation, génération N° Lot).
+* Formulaire à cases à cocher contextuelles du **Module Fruit/Cynorrhodon** (Diagnostics d'avortement, vacuité akènes).
+* Grille de notation terrain **Évaluation du Semis Aa1** (Phénotype, maladies, motifs de sélection/élimination).
+* Moteur de génération automatique de rapports synthétiques éditables en champ libre.
+
+### Phase 3 : Calculs de Performance, Bilans & Valorisation B2B
+* Moteur de statistiques : Calcul automatisé du taux de nouaison réel, taux de vacuité et bilans sanitaires.
+* Bilan annuel de performance par variété parentale (Père / Mère).
+* Module d'exportation de dossiers certifiés **DHO (Droits d'Obtention Végétale)** au format PDF/A.
+* Rapports d'index de fertilité B2B et gestion des abonnements/licences.
