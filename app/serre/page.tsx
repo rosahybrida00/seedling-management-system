@@ -1,12 +1,20 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
-import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2 } from "lucide-react"
+import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2, Pencil, Check, X, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
-import { Card, Badge, EmptyState, Select } from "@/components/breeding/ui"
+import { Card, Badge, EmptyState, Field, Select, SectionHeading, Textarea } from "@/components/breeding/ui"
 import { formatDate } from "@/components/breeding/format"
+import {
+  PHENOTYPE_LABELS,
+  PRESSION_SANITAIRE_LABELS,
+  TRAITEMENT_LABELS,
+  MOTIF_ELIMINATION_LABELS,
+  CRITERE_SELECTION_LABELS,
+} from "@/lib/domain/supabase-types"
+import type { Seedling } from "@/lib/domain/supabase-types"
 
 interface Greenhouse {
   id: string
@@ -27,16 +35,6 @@ interface SowingBatch {
   harvest_date: string | null
   seed_count: number
   table_id: string | null
-  remarks: string
-  created_at: string
-}
-
-interface Seedling {
-  id: string
-  batch_id: string
-  code: string
-  index: number
-  status: "observing" | "discarded" | "selected"
   remarks: string
   created_at: string
 }
@@ -70,6 +68,7 @@ function SerreContent() {
   const [query, setQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
   const [greenhouseFilter, setGreenhouseFilter] = useState("")
+  const [editingId, setEditingId] = useState<string | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -132,9 +131,20 @@ function SerreContent() {
     })
   }, [seedlings, query, statusFilter, greenhouseFilter, batchMap, tableMap])
 
+  async function updateSeedling(s: Seedling, changes: Partial<Seedling>) {
+    await supabase.from("seedlings").update(changes).eq("id", s.id)
+    fetchData()
+  }
+
+  async function deleteSeedling(id: string) {
+    if (!confirm("Supprimer ce semis ?")) return
+    await supabase.from("seedlings").delete().eq("id", id)
+    fetchData()
+  }
+
   async function handleExport() {
     const csv = [
-      "Code,Statut,Lot,Date semis,Graines,Serre,Table,Remarques",
+      "Code,Statut,Lot,Date semis,Graines,Serre,Table,Phénotype,Pression sanitaire,Traitement,Motif élimination,Critère sélection,Rapport,Remarques",
       ...filtered.map((s) => {
         const batch = batchMap.get(s.batch_id)
         const tbl = batch?.table_id ? tableMap.get(batch.table_id) : null
@@ -147,6 +157,12 @@ function SerreContent() {
           `"${batch?.seed_count ?? ""}"`,
           `"${gh?.name ?? ""}"`,
           `"${tbl?.name ?? ""}"`,
+          `"${PHENOTYPE_LABELS[s.phenotype_vigueur ?? ""] ?? ""}"`,
+          `"${PRESSION_SANITAIRE_LABELS[s.pression_sanitaire ?? ""] ?? ""}"`,
+          `"${TRAITEMENT_LABELS[s.traitement ?? ""] ?? ""}"`,
+          `"${MOTIF_ELIMINATION_LABELS[s.motif_elimination ?? ""] ?? ""}"`,
+          `"${CRITERE_SELECTION_LABELS[s.critere_selection ?? ""] ?? ""}"`,
+          `"${s.auto_report ?? ""}"`,
           `"${s.remarks ?? ""}"`,
         ].join(",")
       }),
@@ -160,32 +176,17 @@ function SerreContent() {
     URL.revokeObjectURL(url)
   }
 
-  async function handleDeleteAll() {
-    if (!confirm("Supprimer tous vos semis ?")) return
-    const { data: userData } = await supabase.auth.getUser()
-    if (!userData.user) return
-    await supabase.from("seedlings").delete().eq("user_id", userData.user.id)
-    fetchData()
-  }
-
   return (
     <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 className="font-serif text-2xl text-foreground">Catalogue des Semis</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            {filtered.length} semis — recherchez par code, lot ou remarque.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
+      <SectionHeading
+        title="Catalogue des Semis"
+        description="Évaluation des individus Aa1 : phénotype, pression sanitaire, sélection et rapports automatisés."
+        action={
           <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
             <Download className="size-4" /> Exporter
           </Button>
-          <Button variant="destructive" size="sm" onClick={handleDeleteAll} className="gap-1.5">
-            <Trash2 className="size-4" /> Tout supprimer
-          </Button>
-        </div>
-      </div>
+        }
+      />
 
       <div className="flex flex-wrap gap-3">
         <div className="relative flex-1 min-w-[200px]">
@@ -197,25 +198,15 @@ function SerreContent() {
             className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
           />
         </div>
-        <Select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          className="w-44"
-        >
+        <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-44">
           <option value="">Tous statuts</option>
           <option value="observing">En observation</option>
           <option value="selected">Sélectionné</option>
           <option value="discarded">Éliminé</option>
         </Select>
-        <Select
-          value={greenhouseFilter}
-          onChange={(e) => setGreenhouseFilter(e.target.value)}
-          className="w-44"
-        >
+        <Select value={greenhouseFilter} onChange={(e) => setGreenhouseFilter(e.target.value)} className="w-44">
           <option value="">Toutes serres</option>
-          {greenhouses.map((g) => (
-            <option key={g.id} value={g.id}>{g.name}</option>
-          ))}
+          {greenhouses.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
         </Select>
       </div>
 
@@ -230,20 +221,26 @@ function SerreContent() {
           description="Créez des croisements et des lots de semis depuis la page Croisement, ou modifiez vos critères de recherche."
         />
       ) : (
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {filtered.map((s) => (
-            <SeedlingCard
-              key={s.id}
-              seedling={s}
-              batch={batchMap.get(s.batch_id) ?? null}
-              table={batchMap.get(s.batch_id)?.table_id ? tableMap.get(batchMap.get(s.batch_id)!.table_id!) ?? null : null}
-              greenhouse={(() => {
-                const batch = batchMap.get(s.batch_id)
-                const tbl = batch?.table_id ? tableMap.get(batch.table_id) : null
-                return tbl ? greenhouseMap.get(tbl.greenhouse_id) ?? null : null
-              })()}
-            />
-          ))}
+        <div className="grid gap-4">
+          {filtered.map((s) => {
+            const batch = batchMap.get(s.batch_id) ?? null
+            const tbl = batch?.table_id ? tableMap.get(batch.table_id) ?? null : null
+            const gh = tbl ? greenhouseMap.get(tbl.greenhouse_id) ?? null : null
+            return (
+              <SeedlingCard
+                key={s.id}
+                seedling={s}
+                batch={batch}
+                table={tbl}
+                greenhouse={gh}
+                isEditing={editingId === s.id}
+                onEdit={() => setEditingId(s.id)}
+                onCancel={() => setEditingId(null)}
+                onSave={(changes) => updateSeedling(s, changes)}
+                onDelete={() => deleteSeedling(s.id)}
+              />
+            )
+          })}
         </div>
       )}
     </div>
@@ -255,50 +252,212 @@ function SeedlingCard({
   batch,
   table,
   greenhouse,
+  isEditing,
+  onEdit,
+  onCancel,
+  onSave,
+  onDelete,
 }: {
   seedling: Seedling
   batch: SowingBatch | null
   table: GreenhouseTable | null
   greenhouse: Greenhouse | null
+  isEditing: boolean
+  onEdit: () => void
+  onCancel: () => void
+  onSave: (changes: Partial<Seedling>) => void
+  onDelete: () => void
 }) {
+  const [draft, setDraft] = useState({
+    status: seedling.status,
+    phenotype_vigueur: seedling.phenotype_vigueur ?? "",
+    pression_sanitaire: seedling.pression_sanitaire ?? "",
+    traitement: seedling.traitement ?? "",
+    motif_elimination: seedling.motif_elimination ?? "",
+    critere_selection: seedling.critere_selection ?? "",
+    remarks: seedling.remarks,
+    auto_report: seedling.auto_report ?? "",
+  })
+
+  function generateReport(): string {
+    const parts: string[] = []
+    parts.push(`Semis ${seedling.code}`)
+    if (batch) parts.push(`(lot ${batch.code})`)
+    parts.push(":")
+    if (draft.phenotype_vigueur) {
+      parts.push(`Sujet présentant ${PHENOTYPE_LABELS[draft.phenotype_vigueur]?.toLowerCase() ?? draft.phenotype_vigueur}.`)
+    }
+    if (draft.pression_sanitaire) {
+      parts.push(`Présence de ${PRESSION_SANITAIRE_LABELS[draft.pression_sanitaire]?.toLowerCase() ?? draft.pression_sanitaire} constatée.`)
+    }
+    if (draft.traitement) {
+      parts.push(`Traitement appliqué : ${TRAITEMENT_LABELS[draft.traitement]?.toLowerCase() ?? draft.traitement}.`)
+    }
+    if (draft.status === "discarded" && draft.motif_elimination) {
+      parts.push(`Motif d'élimination : ${MOTIF_ELIMINATION_LABELS[draft.motif_elimination]?.toLowerCase() ?? draft.motif_elimination}.`)
+    }
+    if (draft.status === "selected" && draft.critere_selection) {
+      parts.push(`Critère de sélection : ${CRITERE_SELECTION_LABELS[draft.critere_selection]?.toLowerCase() ?? draft.critere_selection}.`)
+    }
+    return parts.join(" ")
+  }
+
+  function handleSave() {
+    const report = draft.auto_report || generateReport()
+    onSave({
+      status: draft.status,
+      phenotype_vigueur: draft.phenotype_vigueur || null,
+      pression_sanitaire: draft.pression_sanitaire || null,
+      traitement: draft.traitement || null,
+      motif_elimination: draft.motif_elimination || null,
+      critere_selection: draft.critere_selection || null,
+      remarks: draft.remarks,
+      auto_report: report,
+    })
+  }
+
+  function handleGenerate() {
+    const report = generateReport()
+    setDraft({ ...draft, auto_report: report })
+  }
+
+  if (isEditing) {
+    return (
+      <Card className="p-4">
+        <div className="flex items-center gap-3 border-b border-border pb-3">
+          <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <Leaf className="size-4" />
+          </span>
+          <div>
+            <p className="font-serif text-base text-foreground">{seedling.code}</p>
+            {batch ? <p className="text-xs text-muted-foreground">Lot {batch.code} · {batch.seed_count} graine(s)</p> : null}
+          </div>
+        </div>
+
+        <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <Field label="Statut">
+            <Select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Seedling["status"] })}>
+              <option value="observing">En observation</option>
+              <option value="selected">Sélectionné</option>
+              <option value="discarded">Éliminé</option>
+            </Select>
+          </Field>
+          <Field label="Phénotype & Vigueur">
+            <Select value={draft.phenotype_vigueur} onChange={(e) => setDraft({ ...draft, phenotype_vigueur: e.target.value })}>
+              <option value="">—</option>
+              {Object.entries(PHENOTYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </Select>
+          </Field>
+          <Field label="Pression sanitaire">
+            <Select value={draft.pression_sanitaire} onChange={(e) => setDraft({ ...draft, pression_sanitaire: e.target.value })}>
+              <option value="">—</option>
+              {Object.entries(PRESSION_SANITAIRE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </Select>
+          </Field>
+          <Field label="Traitement & Soins">
+            <Select value={draft.traitement} onChange={(e) => setDraft({ ...draft, traitement: e.target.value })}>
+              <option value="">—</option>
+              {Object.entries(TRAITEMENT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </Select>
+          </Field>
+          {draft.status === "discarded" ? (
+            <Field label="Motif d'élimination">
+              <Select value={draft.motif_elimination} onChange={(e) => setDraft({ ...draft, motif_elimination: e.target.value })}>
+                <option value="">—</option>
+                {Object.entries(MOTIF_ELIMINATION_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </Select>
+            </Field>
+          ) : null}
+          {draft.status === "selected" ? (
+            <Field label="Critère de sélection">
+              <Select value={draft.critere_selection} onChange={(e) => setDraft({ ...draft, critere_selection: e.target.value })}>
+                <option value="">—</option>
+                {Object.entries(CRITERE_SELECTION_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </Select>
+            </Field>
+          ) : null}
+        </div>
+
+        <div className="mt-3">
+          <Field label="Rapport automatique" hint="Généré à partir des cases cochées. Modifiable librement.">
+            <Textarea value={draft.auto_report} onChange={(e) => setDraft({ ...draft, auto_report: e.target.value })} placeholder="Cliquez sur « Générer » pour créer le rapport automatiquement…" />
+          </Field>
+          <div className="mt-2">
+            <Button variant="outline" size="sm" onClick={handleGenerate} className="gap-1.5">
+              <FileText className="size-3.5" /> Générer le rapport
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-3">
+          <Field label="Remarques">
+            <Textarea value={draft.remarks} onChange={(e) => setDraft({ ...draft, remarks: e.target.value })} placeholder="Note contextuelle…" />
+          </Field>
+        </div>
+
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onCancel} className="gap-1">
+            <X className="size-4" /> Annuler
+          </Button>
+          <Button size="sm" onClick={handleSave} className="gap-1">
+            <Check className="size-4" /> Enregistrer
+          </Button>
+        </div>
+      </Card>
+    )
+  }
+
   return (
     <Card className="overflow-hidden transition-shadow hover:shadow-md">
-      <div className="relative flex aspect-[4/3] items-center justify-center bg-primary/5">
-        <Leaf className="size-10 text-primary/30" />
-        <div className="absolute top-2 right-2">
-          <Badge tone={STATUS_TONES[seedling.status] ?? "neutral"}>
-            {STATUS_LABELS[seedling.status]}
-          </Badge>
-        </div>
-      </div>
-      <div className="p-3">
-        <h3 className="font-serif text-base leading-tight text-foreground">{seedling.code}</h3>
-        {batch ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Lot {batch.code} · {batch.seed_count} graine(s)
-          </p>
-        ) : null}
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {greenhouse ? (
-            <Badge tone="neutral">
-              <Warehouse className="size-3" /> {greenhouse.name}
-            </Badge>
-          ) : null}
-          {table ? (
-            <Badge tone="neutral">
-              <Table2 className="size-3" /> {table.name}
-            </Badge>
+      <div className="flex items-center gap-3 p-3">
+        <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Leaf className="size-4" />
+        </span>
+        <div className="flex-1">
+          <p className="font-serif text-base leading-tight text-foreground">{seedling.code}</p>
+          {batch ? (
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Lot {batch.code} · {batch.seed_count} graine(s) · semé le {formatDate(batch.sowing_date)}
+            </p>
           ) : null}
         </div>
-        {batch ? (
-          <p className="mt-2 text-xs text-muted-foreground">
-            Semé le {formatDate(batch.sowing_date)}
-          </p>
-        ) : null}
-        {seedling.remarks ? (
-          <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{seedling.remarks}</p>
-        ) : null}
+        <Badge tone={STATUS_TONES[seedling.status] ?? "neutral"}>
+          {STATUS_LABELS[seedling.status]}
+        </Badge>
+        <div className="flex gap-1">
+          <Button size="sm" variant="ghost" onClick={onEdit} className="gap-1">
+            <Pencil className="size-3.5" /> Évaluer
+          </Button>
+          <Button size="sm" variant="destructive" onClick={onDelete}>
+            <Trash2 className="size-3.5" />
+          </Button>
+        </div>
       </div>
+
+      <div className="flex flex-wrap gap-1.5 px-3 pb-2">
+        {greenhouse ? <Badge tone="neutral"><Warehouse className="size-3" /> {greenhouse.name}</Badge> : null}
+        {table ? <Badge tone="neutral"><Table2 className="size-3" /> {table.name}</Badge> : null}
+        {seedling.phenotype_vigueur ? <Badge tone="neutral">{PHENOTYPE_LABELS[seedling.phenotype_vigueur] ?? seedling.phenotype_vigueur}</Badge> : null}
+        {seedling.pression_sanitaire ? <Badge tone={seedling.pression_sanitaire === "indemne" ? "success" : "danger"}>{PRESSION_SANITAIRE_LABELS[seedling.pression_sanitaire] ?? seedling.pression_sanitaire}</Badge> : null}
+        {seedling.traitement ? <Badge tone="primary">{TRAITEMENT_LABELS[seedling.traitement] ?? seedling.traitement}</Badge> : null}
+        {seedling.motif_elimination ? <Badge tone="danger">{MOTIF_ELIMINATION_LABELS[seedling.motif_elimination] ?? seedling.motif_elimination}</Badge> : null}
+        {seedling.critere_selection ? <Badge tone="success">{CRITERE_SELECTION_LABELS[seedling.critere_selection] ?? seedling.critere_selection}</Badge> : null}
+      </div>
+
+      {seedling.auto_report ? (
+        <div className="border-t border-border bg-muted/20 p-3">
+          <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+            <FileText className="mt-0.5 size-3 shrink-0" />
+            <span>{seedling.auto_report}</span>
+          </p>
+        </div>
+      ) : null}
+
+      {seedling.remarks ? (
+        <div className="border-t border-border px-3 py-2">
+          <p className="text-xs text-muted-foreground italic">{seedling.remarks}</p>
+        </div>
+      ) : null}
     </Card>
   )
 }
