@@ -5,18 +5,22 @@ import { Search, Plus, Upload, Download, Trash2, Flower2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { WeatherBanner } from "@/components/weather/weather-banner"
 import { supabase } from "@/lib/supabase-client"
-import type { Rose } from "@/lib/domain/supabase-types"
+import type { Variety, VarietyPhoto } from "@/lib/domain/supabase-types"
 import { ROSE_CATEGORY_LABELS } from "@/lib/domain/supabase-types"
 import { Card, Badge, EmptyState, Field, Input, Select } from "@/components/breeding/ui"
 
+interface VarietyWithPhotos extends Variety {
+  varieties_photos?: VarietyPhoto[]
+}
+
 export default function CatalogPage() {
-  const [roses, setRoses] = useState<Rose[]>([])
+  const [varieties, setVarieties] = useState<VarietyWithPhotos[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("")
   const [typeFilter, setTypeFilter] = useState("")
   const [showAddForm, setShowAddForm] = useState(false)
-  const [newRose, setNewRose] = useState({
+  const [newVariety, setNewVariety] = useState({
     name: "",
     obtenteur: "",
     type: "",
@@ -26,70 +30,70 @@ export default function CatalogPage() {
   })
 
   useEffect(() => {
-    fetchRoses()
+    fetchVarieties()
   }, [])
 
-  async function fetchRoses() {
+  async function fetchVarieties() {
     setLoading(true)
     const { data, error } = await supabase
-      .from("roses")
-      .select("*")
+      .from("varieties")
+      .select("*, varieties_photos(*)")
       .order("name")
     if (!error && data) {
-      setRoses(data as Rose[])
+      setVarieties(data as VarietyWithPhotos[])
     }
     setLoading(false)
   }
 
   const availableTypes = useMemo(() => {
     const set = new Set<string>()
-    roses.forEach((r) => { if (r.type) set.add(r.type) })
+    varieties.forEach((v) => { if (v.type) set.add(v.type) })
     return Array.from(set).sort()
-  }, [roses])
+  }, [varieties])
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
-    return roses.filter((r) => {
+    return varieties.filter((v) => {
       if (q) {
-        const haystack = `${r.name} ${r.obtenteur ?? ""} ${r.type ?? ""} ${r.parentage ?? ""} ${r.description ?? ""}`.toLowerCase()
+        const haystack = `${v.name} ${v.obtenteur ?? ""} ${v.type ?? ""} ${v.parentage ?? ""} ${v.description ?? ""}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
-      if (categoryFilter && r.category !== categoryFilter) return false
-      if (typeFilter && r.type !== typeFilter) return false
+      if (categoryFilter && v.category !== categoryFilter) return false
+      if (typeFilter && v.type !== typeFilter) return false
       return true
     })
-  }, [roses, query, categoryFilter, typeFilter])
+  }, [varieties, query, categoryFilter, typeFilter])
 
   async function handleAdd() {
-    if (!newRose.name.trim()) return
+    if (!newVariety.name.trim()) return
     const { data: userData } = await supabase.auth.getUser()
-    const { error } = await supabase.from("roses").insert({
-      name: newRose.name.trim(),
-      obtenteur: newRose.obtenteur || null,
-      type: newRose.type || null,
-      parentage: newRose.parentage || null,
-      description: newRose.description || null,
-      category: newRose.category,
+    const { error } = await supabase.from("varieties").insert({
+      name: newVariety.name.trim(),
+      obtenteur: newVariety.obtenteur || null,
+      type: newVariety.type || null,
+      parentage: newVariety.parentage || null,
+      description: newVariety.description || null,
+      category: newVariety.category,
       user_id: userData.user?.id ?? null,
     })
     if (!error) {
-      setNewRose({ name: "", obtenteur: "", type: "", parentage: "", description: "", category: "baptisee" })
+      setNewVariety({ name: "", obtenteur: "", type: "", parentage: "", description: "", category: "baptisee" })
       setShowAddForm(false)
-      fetchRoses()
+      fetchVarieties()
     }
   }
 
   async function handleExport() {
     const csv = [
       "Nom,Obtenteur,Type,Parentage,Catégorie,Description",
-      ...filtered.map((r) =>
+      ...filtered.map((v) =>
         [
-          `"${r.name}"`,
-          `"${r.obtenteur ?? ""}"`,
-          `"${r.type ?? ""}"`,
-          `"${r.parentage ?? ""}"`,
-          `"${ROSE_CATEGORY_LABELS[r.category]}"`,
-          `"${r.description ?? ""}"`,
+          `"${v.name}"`,
+          `"${v.obtenteur ?? ""}"`,
+          `"${v.type ?? ""}"`,
+          `"${v.parentage ?? ""}"`,
+          `"${ROSE_CATEGORY_LABELS[v.category]}"`,
+          `"${v.description ?? ""}"`,
         ].join(","),
       ),
     ].join("\n")
@@ -103,11 +107,11 @@ export default function CatalogPage() {
   }
 
   async function handleDeleteAll() {
-    if (!confirm("Supprimer tous vos rosiers du catalogue ?")) return
+    if (!confirm("Supprimer toutes vos variétés du catalogue ?")) return
     const { data: userData } = await supabase.auth.getUser()
     if (!userData.user) return
-    await supabase.from("roses").delete().eq("user_id", userData.user.id)
-    fetchRoses()
+    await supabase.from("varieties").delete().eq("user_id", userData.user.id)
+    fetchVarieties()
   }
 
   return (
@@ -175,40 +179,40 @@ export default function CatalogPage() {
               <Field label="Nom de la variété" htmlFor="r-name">
                 <Input
                   id="r-name"
-                  value={newRose.name}
-                  onChange={(e) => setNewRose({ ...newRose, name: e.target.value })}
+                  value={newVariety.name}
+                  onChange={(e) => setNewVariety({ ...newVariety, name: e.target.value })}
                   placeholder="Rosa gallica 'Officinalis'"
                 />
               </Field>
               <Field label="Obtenteur" htmlFor="r-obt">
                 <Input
                   id="r-obt"
-                  value={newRose.obtenteur}
-                  onChange={(e) => setNewRose({ ...newRose, obtenteur: e.target.value })}
+                  value={newVariety.obtenteur}
+                  onChange={(e) => setNewVariety({ ...newVariety, obtenteur: e.target.value })}
                   placeholder="Mme Hardy, 1832"
                 />
               </Field>
               <Field label="Type" htmlFor="r-type">
                 <Input
                   id="r-type"
-                  value={newRose.type}
-                  onChange={(e) => setNewRose({ ...newRose, type: e.target.value })}
+                  value={newVariety.type}
+                  onChange={(e) => setNewVariety({ ...newVariety, type: e.target.value })}
                   placeholder="Hybride de thé"
                 />
               </Field>
               <Field label="Parentage" htmlFor="r-parent">
                 <Input
                   id="r-parent"
-                  value={newRose.parentage}
-                  onChange={(e) => setNewRose({ ...newRose, parentage: e.target.value })}
+                  value={newVariety.parentage}
+                  onChange={(e) => setNewVariety({ ...newVariety, parentage: e.target.value })}
                   placeholder="Rosa gallica × Rosa moschata"
                 />
               </Field>
               <Field label="Catégorie" htmlFor="r-cat">
                 <Select
                   id="r-cat"
-                  value={newRose.category}
-                  onChange={(e) => setNewRose({ ...newRose, category: e.target.value as typeof newRose.category })}
+                  value={newVariety.category}
+                  onChange={(e) => setNewVariety({ ...newVariety, category: e.target.value as typeof newVariety.category })}
                 >
                   <option value="baptisee">Variété baptisée</option>
                   <option value="lignee">Lignée / Souche parentale</option>
@@ -218,15 +222,15 @@ export default function CatalogPage() {
               <Field label="Description" htmlFor="r-desc">
                 <Input
                   id="r-desc"
-                  value={newRose.description}
-                  onChange={(e) => setNewRose({ ...newRose, description: e.target.value })}
+                  value={newVariety.description}
+                  onChange={(e) => setNewVariety({ ...newVariety, description: e.target.value })}
                   placeholder="Rose blanche très parfumée…"
                 />
               </Field>
             </div>
             <div className="mt-4 flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setShowAddForm(false)}>Annuler</Button>
-              <Button onClick={handleAdd} disabled={!newRose.name.trim()}>Ajouter au catalogue</Button>
+              <Button onClick={handleAdd} disabled={!newVariety.name.trim()}>Ajouter au catalogue</Button>
             </div>
           </Card>
         ) : null}
@@ -243,8 +247,8 @@ export default function CatalogPage() {
           />
         ) : (
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {filtered.map((rose) => (
-              <RoseCard key={rose.id} rose={rose} />
+            {filtered.map((variety) => (
+              <VarietyCard key={variety.id} variety={variety} />
             ))}
           </div>
         )}
@@ -253,42 +257,43 @@ export default function CatalogPage() {
   )
 }
 
-function RoseCard({ rose }: { rose: Rose }) {
+function VarietyCard({ variety }: { variety: VarietyWithPhotos }) {
   const categoryTone: Record<string, "primary" | "accent" | "warning"> = {
     baptisee: "primary",
     lignee: "accent",
     evaluation: "warning",
   }
+  const primaryPhoto = variety.varieties_photos?.find((p) => p.is_primary) ?? variety.varieties_photos?.[0]
   return (
     <Card className="overflow-hidden transition-shadow hover:shadow-md">
       <div className="relative aspect-[4/3] bg-muted">
-        {rose.photo_url ? (
+        {primaryPhoto ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={rose.photo_url} alt={rose.name} className="size-full object-cover" />
+          <img src={primaryPhoto.photo_url} alt={variety.name} className="size-full object-cover" />
         ) : (
           <div className="flex size-full items-center justify-center bg-primary/5">
             <Flower2 className="size-10 text-primary/30" />
           </div>
         )}
         <div className="absolute top-2 right-2">
-          <Badge tone={categoryTone[rose.category] ?? "neutral"}>
-            {ROSE_CATEGORY_LABELS[rose.category]}
+          <Badge tone={categoryTone[variety.category] ?? "neutral"}>
+            {ROSE_CATEGORY_LABELS[variety.category]}
           </Badge>
         </div>
       </div>
       <div className="p-3">
-        <h3 className="font-serif text-base leading-tight text-foreground">{rose.name}</h3>
-        {rose.obtenteur ? (
-          <p className="mt-0.5 text-xs text-muted-foreground">{rose.obtenteur}</p>
+        <h3 className="font-serif text-base leading-tight text-foreground">{variety.name}</h3>
+        {variety.obtenteur ? (
+          <p className="mt-0.5 text-xs text-muted-foreground">{variety.obtenteur}</p>
         ) : null}
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {rose.type ? <Badge tone="neutral">{rose.type}</Badge> : null}
+          {variety.type ? <Badge tone="neutral">{variety.type}</Badge> : null}
         </div>
-        {rose.parentage ? (
-          <p className="mt-2 text-xs text-muted-foreground italic">{rose.parentage}</p>
+        {variety.parentage ? (
+          <p className="mt-2 text-xs text-muted-foreground italic">{variety.parentage}</p>
         ) : null}
-        {rose.description ? (
-          <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{rose.description}</p>
+        {variety.description ? (
+          <p className="mt-2 text-xs text-muted-foreground line-clamp-2">{variety.description}</p>
         ) : null}
       </div>
     </Card>

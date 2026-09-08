@@ -34,6 +34,30 @@ export interface Rose {
   updated_at: string
 }
 
+/** Variété du catalogue (table varieties). */
+export interface Variety {
+  id: string
+  name: string
+  obtenteur: string | null
+  type: string | null
+  parentage: string | null
+  description: string | null
+  category: RoseCategory
+  user_id: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Photo associée à une variété (table varieties_photos). */
+export interface VarietyPhoto {
+  id: string
+  variety_id: string
+  photo_url: string
+  is_primary: boolean
+  caption: string | null
+  created_at: string
+}
+
 /** Profil professionnel de l'hybrideur. */
 export interface Profile {
   id: string
