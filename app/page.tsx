@@ -14,6 +14,7 @@ export default function CatalogPage() {
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState("")
   const [categoryFilter, setCategoryFilter] = useState("")
+  const [typeFilter, setTypeFilter] = useState("")
   const [showAddForm, setShowAddForm] = useState(false)
   const [newRose, setNewRose] = useState({
     name: "",
@@ -40,17 +41,24 @@ export default function CatalogPage() {
     setLoading(false)
   }
 
+  const availableTypes = useMemo(() => {
+    const set = new Set<string>()
+    roses.forEach((r) => { if (r.type) set.add(r.type) })
+    return Array.from(set).sort()
+  }, [roses])
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
     return roses.filter((r) => {
       if (q) {
-        const haystack = `${r.name} ${r.obtenteur ?? ""} ${r.type ?? ""} ${r.parentage ?? ""}`.toLowerCase()
+        const haystack = `${r.name} ${r.obtenteur ?? ""} ${r.type ?? ""} ${r.parentage ?? ""} ${r.description ?? ""}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
       if (categoryFilter && r.category !== categoryFilter) return false
+      if (typeFilter && r.type !== typeFilter) return false
       return true
     })
-  }, [roses, query, categoryFilter])
+  }, [roses, query, categoryFilter, typeFilter])
 
   async function handleAdd() {
     if (!newRose.name.trim()) return
@@ -110,7 +118,7 @@ export default function CatalogPage() {
           <div>
             <h1 className="font-serif text-2xl text-foreground">Catalogue des Rosiers</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {filtered.length} variété{filtered.length > 1 ? "s" : ""} — recherchez par nom, obtenteur ou type.
+              {filtered.length} variété{filtered.length > 1 ? "s" : ""} — recherchez par nom, obtenteur, type ou parentage.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -135,7 +143,7 @@ export default function CatalogPage() {
             <Input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Rechercher par nom, obtenteur, type…"
+              placeholder="Rechercher par nom, obtenteur, type, parentage…"
               className="pl-9"
             />
           </div>
@@ -148,6 +156,16 @@ export default function CatalogPage() {
             <option value="baptisee">Variétés baptisées</option>
             <option value="lignee">Lignées / Souches</option>
             <option value="evaluation">En évaluation</option>
+          </Select>
+          <Select
+            value={typeFilter}
+            onChange={(e) => setTypeFilter(e.target.value)}
+            className="w-48"
+          >
+            <option value="">Tous types</option>
+            {availableTypes.map((t) => (
+              <option key={t} value={t}>{t}</option>
+            ))}
           </Select>
         </div>
 
