@@ -117,3 +117,4 @@ export interface GreenhouseTable extends Entity {
   capacity: number | null
   remarks: string
 }
+
