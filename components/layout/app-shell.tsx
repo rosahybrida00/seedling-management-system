@@ -1,13 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Link from "next/link"
-import { usePathname, useRouter } from "next/navigation"
-<<<<<<< HEAD
-import { Flower2, Cherry, Sprout, CloudSun, Home, User, Settings, LifeBuoy, LogOut, Menu, X } from "lucide-react"
-=======
-import { Flower2, Cherry, Sprout, CloudSun, Dome as Home, User, Settings, LifeBuoy, LogOut, Menu, X, ChartBar as BarChart3 } from "lucide-react"
->>>>>>> bolt/main
+import { usePathname } from "next/navigation"
+import { Flower2, Sprout, CloudSun, Dome as Home, User, Settings, LifeBuoy, LogOut, Menu, X, ChartBar as BarChart3 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { WeatherBanner } from "@/components/weather/weather-banner"
 import { useAuth } from "@/components/auth/auth-provider"
@@ -29,31 +25,8 @@ const ADMIN_ITEMS = [
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
-  const router = useRouter()
-  const { user, loading, signOut } = useAuth()
+  const { user, signOut } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
-
-  useEffect(() => {
-    if (!loading && !user) {
-      router.push("/auth/login")
-    }
-  }, [loading, user, router])
-
-  if (loading || !user) {
-    return (
-      <div className="flex min-h-svh items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3">
-          <Flower2 className="size-8 animate-pulse text-primary" />
-          <p className="text-sm text-muted-foreground">Chargement…</p>
-        </div>
-      </div>
-    )
-  }
-
-  async function handleSignOut() {
-    await signOut()
-    router.push("/auth/login")
-  }
 
   return (
     <div className="min-h-svh bg-background">
@@ -78,7 +51,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       "flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                       active
                         ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     )}
                   >
                     <item.icon className="size-4" />
@@ -99,7 +72,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                         "flex items-center gap-1.5 rounded-md px-3 py-2 text-sm transition-colors",
                         active
                           ? "bg-primary/10 text-primary"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
                       )}
                     >
                       <item.icon className="size-4" />
@@ -107,9 +80,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     </Link>
                   )
                 })}
-                <Button variant="ghost" size="sm" onClick={handleSignOut} className="gap-1.5">
-                  <LogOut className="size-4" /> Déconnexion
-                </Button>
+                {user && (
+                  <Button variant="ghost" size="sm" onClick={() => signOut()} className="gap-1.5">
+                    <LogOut className="size-4" /> Déconnexion
+                  </Button>
+                )}
               </div>
               <button
                 onClick={() => setMenuOpen((v) => !v)}
@@ -132,7 +107,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                       "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
                       active
                         ? "bg-primary/10 text-primary"
-                        : "text-muted-foreground hover:bg-muted hover:text-foreground",
+                        : "text-muted-foreground hover:bg-muted hover:text-foreground"
                     )}
                   >
                     <item.icon className="size-4" />
@@ -140,9 +115,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   </Link>
                 )
               })}
-              <Button variant="ghost" size="sm" onClick={handleSignOut} className="mt-1 gap-1.5">
-                <LogOut className="size-4" /> Déconnexion
-              </Button>
+              {user && (
+                <Button variant="ghost" size="sm" onClick={() => signOut()} className="mt-1 gap-1.5">
+                  <LogOut className="size-4" /> Déconnexion
+                </Button>
+              )}
             </nav>
           ) : null}
         </div>
