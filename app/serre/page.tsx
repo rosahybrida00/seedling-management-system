@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
-import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2, Pencil, Check, X, FileText } from "lucide-react"
+import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2, Pencil, Check, X, FileText, Sparkles } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
@@ -15,6 +15,7 @@ import {
   CRITERE_SELECTION_LABELS,
 } from "@/lib/domain/supabase-types"
 import type { Seedling } from "@/lib/domain/supabase-types"
+import { generateSeedlingCode } from "@/lib/domain/nomenclature"
 
 interface Greenhouse {
   id: string
@@ -39,16 +40,44 @@ interface SowingBatch {
   created_at: string
 }
 
+interface HipHarvest {
+  id: string
+  cross_id: string
+  code: string
+  harvest_date: string | null
+  seed_count: number
+  remarks: string
+  fruit_calibre: string | null
+  maturation: string | null
+  avortement_cause: string | null
+  seed_extraction: string | null
+  created_at: string
+  updated_at: string
+}
+
+interface CrossRow {
+  id: string
+  code: string
+  seed_parent: string | null
+  pollen_parent: string | null
+  pollination_date: string | null
+  remarks: string
+  created_at: string
+  updated_at: string
+}
+
 const STATUS_LABELS: Record<string, string> = {
   observing: "En observation",
   discarded: "Éliminé",
   selected: "Sélectionné",
+  germinated: "Levée",
 }
 
-const STATUS_TONES: Record<string, "neutral" | "primary" | "warning" | "danger"> = {
+const STATUS_TONES: Record<string, "neutral" | "primary" | "warning" | "danger" | "success"> = {
   observing: "warning",
   discarded: "danger",
   selected: "primary",
+  germinated: "success",
 }
 
 export default function SerrePage() {
@@ -64,6 +93,8 @@ function SerreContent() {
   const [batches, setBatches] = useState<SowingBatch[]>([])
   const [tables, setTables] = useState<GreenhouseTable[]>([])
   const [greenhouses, setGreenhouses] = useState<Greenhouse[]>([])
+  const [harvestRows, setHarvestRows] = useState<HipHarvest[]>([])
+  const [crossRows, setCrossRows] = useState<CrossRow[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState("")
   const [statusFilter, setStatusFilter] = useState("")
@@ -76,16 +107,20 @@ function SerreContent() {
 
   async function fetchData() {
     setLoading(true)
-    const [seed, bat, tbl, gh] = await Promise.all([
+    const [seed, bat, tbl, gh, hv, cr] = await Promise.all([
       supabase.from("seedlings").select("*").order("code"),
       supabase.from("sowing_batches").select("*").order("sowing_date", { ascending: false }),
       supabase.from("greenhouse_tables").select("id, greenhouse_id, name").order("name"),
       supabase.from("greenhouses").select("id, name").order("name"),
+      supabase.from("hip_harvests").select("*").order("created_at", { ascending: false }),
+      supabase.from("crosses").select("*").order("created_at", { ascending: false }),
     ])
     if (seed.data) setSeedlings(seed.data as Seedling[])
     if (bat.data) setBatches(bat.data as SowingBatch[])
     if (tbl.data) setTables(tbl.data as GreenhouseTable[])
     if (gh.data) setGreenhouses(gh.data as Greenhouse[])
+    if (hv.data) setHarvestRows(hv.data as HipHarvest[])
+    if (cr.data) setCrossRows(cr.data as CrossRow[])
     setLoading(false)
   }
 
@@ -133,6 +168,46 @@ function SerreContent() {
 
   async function updateSeedling(s: Seedling, changes: Partial<Seedling>) {
     await supabase.from("seedlings").update(changes).eq("id", s.id)
+    fetchData()
+  }
+
+  async function markAsGerminated(s: Seedling) {
+    const batch = batchMap.get(s.batch_id)
+    if (!batch) return
+
+    const harvest = harvestRows.find((h) => h.id === batch.hip_harvest_id)
+    const cross = harvest ? crossRows.find((c) => c.id === harvest.cross_id) : null
+    if (!cross || !harvest) return
+
+    const lotIndex = 0
+    const flowerIndex = (s.index ?? 1) - 1
+    const code = generateSeedlingCode({
+      seedParent: cross.seed_parent ?? "",
+      pollenParent: cross.pollen_parent ?? "",
+      lotIndex,
+      flowerIndex,
+      seedCount: batch.seed_count,
+    })
+
+    const { data: userData } = await supabase.auth.getUser()
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("obtenteur_name")
+      .eq("id", userData.user?.id ?? "")
+      .maybeSingle()
+
+    await supabase.from("seedlings").update({ status: "germinated" }).eq("id", s.id)
+
+    await supabase.from("seedling_catalog").insert({
+      seedling_id: s.id,
+      code,
+      name: s.code,
+      obtenteur: profile?.obtenteur_name ?? null,
+      seed_parent: cross.seed_parent,
+      pollen_parent: cross.pollen_parent,
+      notes: s.remarks ?? "",
+    })
+
     fetchData()
   }
 
@@ -201,6 +276,7 @@ function SerreContent() {
         <Select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="w-44">
           <option value="">Tous statuts</option>
           <option value="observing">En observation</option>
+          <option value="germinated">Levée</option>
           <option value="selected">Sélectionné</option>
           <option value="discarded">Éliminé</option>
         </Select>
@@ -238,6 +314,7 @@ function SerreContent() {
                 onCancel={() => setEditingId(null)}
                 onSave={(changes) => updateSeedling(s, changes)}
                 onDelete={() => deleteSeedling(s.id)}
+                onGerminate={() => markAsGerminated(s)}
               />
             )
           })}
@@ -267,6 +344,7 @@ function SeedlingCard({
   onCancel: () => void
   onSave: (changes: Partial<Seedling>) => void
   onDelete: () => void
+  onGerminate: () => void
 }) {
   const [draft, setDraft] = useState({
     status: seedling.status,
@@ -425,6 +503,11 @@ function SeedlingCard({
           {STATUS_LABELS[seedling.status]}
         </Badge>
         <div className="flex gap-1">
+          {seedling.status !== "germinated" ? (
+            <Button size="sm" variant="outline" onClick={onGerminate} className="gap-1" title="Marquer comme levée et injecter au catalogue">
+              <Sparkles className="size-3.5" /> Lever
+            </Button>
+          ) : null}
           <Button size="sm" variant="ghost" onClick={onEdit} className="gap-1">
             <Pencil className="size-3.5" /> Évaluer
           </Button>

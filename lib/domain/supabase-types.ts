@@ -148,7 +148,7 @@ export interface Seedling {
   batch_id: string
   code: string
   index: number
-  status: "observing" | "discarded" | "selected"
+  status: "observing" | "discarded" | "selected" | "germinated"
   remarks: string
   phenotype_vigueur: string | null
   pression_sanitaire: string | null

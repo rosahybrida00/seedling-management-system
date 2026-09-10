@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { Flower2, Cherry, Sprout, CloudSun, Dome as Home, User, Settings, LifeBuoy, LogOut, Menu, X, ChartBar as BarChart3 } from "lucide-react"
+import { Flower2, Cherry, Sprout, CloudSun, Dome as Home, User, Settings, LifeBuoy, LogOut, Menu, X, ChartBar as BarChart3, Leaf } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { WeatherBanner } from "@/components/weather/weather-banner"
 import { useAuth } from "@/components/auth/auth-provider"
@@ -13,6 +13,7 @@ const NAV_ITEMS = [
   { href: "/", label: "Accueil", icon: Home },
   { href: "/croisement", label: "Croisement", icon: Flower2 },
   { href: "/serre", label: "Serre / Semis", icon: Sprout },
+  { href: "/catalogue-semis", label: "Cat. Semis", icon: Leaf },
   { href: "/meteo", label: "Météo & Capteurs", icon: CloudSun },
   { href: "/bilans", label: "Bilans", icon: BarChart3 },
 ]

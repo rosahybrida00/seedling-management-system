@@ -102,13 +102,16 @@ function CroisementContent() {
       seed_parent: form.seedParent || null,
       pollen_parent: form.pollenParent || null,
       pollination_date: fromDateInput(form.pollinationDate),
-      remarks: form.remarks,
+      remarks: form.remarks || "",
     })
-    if (!error) {
-      setForm({ code: "", seedParent: "", pollenParent: "", pollinationDate: "", remarks: "" })
-      setCreating(false)
-      fetchData()
+    if (error) {
+      console.error("Erreur lors de la création du croisement :", error)
+      alert(`Erreur : ${error.message}`)
+      return
     }
+    setForm({ code: "", seedParent: "", pollenParent: "", pollinationDate: "", remarks: "" })
+    setCreating(false)
+    fetchData()
   }
 
   async function updateCross(c: Cross, changes: Partial<Cross>) {
