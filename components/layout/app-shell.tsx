@@ -18,10 +18,7 @@ const NAV_ITEMS = [
   { href: "/croisement", label: "Croisement", icon: Flower2 },
   { href: "/serre", label: "Serre / Semis", icon: Sprout },
   { href: "/meteo", label: "Météo & Capteurs", icon: CloudSun },
-<<<<<<< HEAD
-=======
   { href: "/bilans", label: "Bilans", icon: BarChart3 },
->>>>>>> bolt/main
 ]
 
 const ADMIN_ITEMS = [
