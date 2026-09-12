@@ -15,7 +15,7 @@ import {
   CRITERE_SELECTION_LABELS,
 } from "@/lib/domain/supabase-types"
 import type { Seedling } from "@/lib/domain/supabase-types"
-import { generateSeedlingCode } from "@/lib/domain/nomenclature"
+import { generateBaseSyllable, generateSeedlingCode, generateCatalogueCode } from "@/lib/domain/nomenclature"
 
 interface Greenhouse {
   id: string
@@ -64,6 +64,9 @@ interface CrossRow {
   remarks: string
   created_at: string
   updated_at: string
+  base_syllable: string | null
+  lot_letter: string | null
+  flower_letter: string | null
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -179,15 +182,12 @@ function SerreContent() {
     const cross = harvest ? crossRows.find((c) => c.id === harvest.cross_id) : null
     if (!cross || !harvest) return
 
-    const lotIndex = 0
-    const flowerIndex = (s.index ?? 1) - 1
-    const code = generateSeedlingCode({
-      seedParent: cross.seed_parent ?? "",
-      pollenParent: cross.pollen_parent ?? "",
-      lotIndex,
-      flowerIndex,
-      seedCount: batch.seed_count,
-    })
+    const base = cross.base_syllable ?? generateBaseSyllable(cross.seed_parent ?? "", cross.pollen_parent ?? "")
+    const lotIdx = 0
+    const flowerIdx = 0
+    const seedlingIdx = s.index ?? 1
+    const seedlingCode = generateSeedlingCode(base, lotIdx, flowerIdx, seedlingIdx)
+    const catalogueCode = generateCatalogueCode(base, lotIdx, flowerIdx, batch.seed_count)
 
     const { data: userData } = await supabase.auth.getUser()
     const { data: profile } = await supabase
@@ -196,17 +196,50 @@ function SerreContent() {
       .eq("id", userData.user?.id ?? "")
       .maybeSingle()
 
-    await supabase.from("seedlings").update({ status: "germinated" }).eq("id", s.id)
+    await supabase.from("seedlings").update({
+      status: "germinated",
+      seedling_code: seedlingCode,
+      evaluation_status: "Évaluation",
+    }).eq("id", s.id)
 
     await supabase.from("seedling_catalog").insert({
       seedling_id: s.id,
-      code,
-      name: s.code,
+      code: catalogueCode,
+      name: seedlingCode,
       obtenteur: profile?.obtenteur_name ?? null,
       seed_parent: cross.seed_parent,
       pollen_parent: cross.pollen_parent,
       notes: s.remarks ?? "",
     })
+
+    fetchData()
+  }
+
+  async function promoteToVariety(s: Seedling) {
+    if (!confirm(`Promouvoir « ${s.seedling_code ?? s.code} » comme variété dans le Catalogue Général ?`)) return
+    const batch = batchMap.get(s.batch_id)
+    const harvest = batch ? harvestRows.find((h) => h.id === batch.hip_harvest_id) : null
+    const cross = harvest ? crossRows.find((c) => c.id === harvest.cross_id) : null
+
+    const { data: userData } = await supabase.auth.getUser()
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("obtenteur_name")
+      .eq("id", userData.user?.id ?? "")
+      .maybeSingle()
+
+    await supabase.from("seedlings").update({ is_promoted_to_variety: true }).eq("id", s.id)
+
+    if (cross) {
+      const parentage = `${cross.seed_parent ?? "?"} × ${cross.pollen_parent ?? "?"}`
+      await supabase.from("varieties").insert({
+        name: s.seedling_code ?? s.code,
+        obtenteur: profile?.obtenteur_name ?? null,
+        type: "Semis sous Évaluation",
+        parentage,
+        category: "evaluation",
+      })
+    }
 
     fetchData()
   }
@@ -315,6 +348,7 @@ function SerreContent() {
                 onSave={(changes) => updateSeedling(s, changes)}
                 onDelete={() => deleteSeedling(s.id)}
                 onGerminate={() => markAsGerminated(s)}
+                onPromote={() => promoteToVariety(s)}
               />
             )
           })}
@@ -345,6 +379,7 @@ function SeedlingCard({
   onSave: (changes: Partial<Seedling>) => void
   onDelete: () => void
   onGerminate: () => void
+  onPromote: () => void
 }) {
   const [draft, setDraft] = useState({
     status: seedling.status,
@@ -355,6 +390,8 @@ function SeedlingCard({
     critere_selection: seedling.critere_selection ?? "",
     remarks: seedling.remarks,
     auto_report: seedling.auto_report ?? "",
+    free_notes: seedling.free_notes ?? "",
+    evaluation_status: seedling.evaluation_status ?? "Évaluation",
   })
 
   function generateReport(): string {
@@ -391,6 +428,8 @@ function SeedlingCard({
       critere_selection: draft.critere_selection || null,
       remarks: draft.remarks,
       auto_report: report,
+      free_notes: draft.free_notes || null,
+      evaluation_status: draft.evaluation_status || "Évaluation",
     })
   }
 
@@ -468,8 +507,24 @@ function SeedlingCard({
         </div>
 
         <div className="mt-3">
+          <Field label="Statut d'évaluation" hint="Évaluation, Sélectionné, Éliminé">
+            <Select value={draft.evaluation_status} onChange={(e) => setDraft({ ...draft, evaluation_status: e.target.value })}>
+              <option value="Évaluation">Évaluation</option>
+              <option value="Sélectionné">Sélectionné</option>
+              <option value="Éliminé">Éliminé</option>
+            </Select>
+          </Field>
+        </div>
+
+        <div className="mt-3">
           <Field label="Remarques">
             <Textarea value={draft.remarks} onChange={(e) => setDraft({ ...draft, remarks: e.target.value })} placeholder="Note contextuelle…" />
+          </Field>
+        </div>
+
+        <div className="mt-3">
+          <Field label="Notes libres de l'hybrideur" hint="Champ libre positionné sous la synthèse automatique">
+            <Textarea value={draft.free_notes} onChange={(e) => setDraft({ ...draft, free_notes: e.target.value })} placeholder="Observations personnelles…" />
           </Field>
         </div>
 
@@ -502,12 +557,19 @@ function SeedlingCard({
         <Badge tone={STATUS_TONES[seedling.status] ?? "neutral"}>
           {STATUS_LABELS[seedling.status]}
         </Badge>
-        <div className="flex gap-1">
+        <div className="flex flex-wrap gap-1">
           {seedling.status !== "germinated" ? (
             <Button size="sm" variant="outline" onClick={onGerminate} className="gap-1" title="Marquer comme levée et injecter au catalogue">
               <Sparkles className="size-3.5" /> Lever
             </Button>
           ) : null}
+          {seedling.is_promoted_to_variety ? (
+            <Badge tone="accent">Variété promue</Badge>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={onPromote} className="gap-1" title="Promouvoir au Catalogue Général">
+              <Sprout className="size-3.5" /> Promouvoir
+            </Button>
+          )}
           <Button size="sm" variant="ghost" onClick={onEdit} className="gap-1">
             <Pencil className="size-3.5" /> Évaluer
           </Button>
@@ -527,12 +589,25 @@ function SeedlingCard({
         {seedling.critere_selection ? <Badge tone="success">{CRITERE_SELECTION_LABELS[seedling.critere_selection] ?? seedling.critere_selection}</Badge> : null}
       </div>
 
+      {seedling.seedling_code ? (
+        <div className="flex flex-wrap gap-1.5 px-3 pb-1">
+          <Badge tone="accent">Code définitif: {seedling.seedling_code}</Badge>
+          {seedling.evaluation_status ? <Badge tone="primary">{seedling.evaluation_status}</Badge> : null}
+        </div>
+      ) : null}
+
       {seedling.auto_report ? (
         <div className="border-t border-border bg-muted/20 p-3">
           <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
             <FileText className="mt-0.5 size-3 shrink-0" />
             <span>{seedling.auto_report}</span>
           </p>
+        </div>
+      ) : null}
+
+      {seedling.free_notes ? (
+        <div className="border-t border-border px-3 py-2">
+          <p className="text-xs text-muted-foreground">Notes: {seedling.free_notes}</p>
         </div>
       ) : null}
 
