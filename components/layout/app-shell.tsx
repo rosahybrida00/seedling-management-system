@@ -3,29 +3,26 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { Flower2, Sprout, CloudSun, Dome as Home, User, Settings, LifeBuoy, LogOut, Menu, X, ChartBar as BarChart3 } from "lucide-react"
+import { Flower2, Sprout, CloudSun, ChartBar as BarChart3, User, Settings, LogOut, Menu, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { WeatherBanner } from "@/components/weather/weather-banner"
 import { useAuth } from "@/components/auth/auth-provider"
+import { useLanguage } from "@/lib/i18n/language-provider"
 import { cn } from "@/lib/utils"
+import type { TranslationKey } from "@/lib/i18n/translations"
 
-const NAV_ITEMS = [
-  { href: "/", label: "Accueil", icon: Home },
-  { href: "/croisement", label: "Croisement", icon: Flower2 },
-  { href: "/serre", label: "Serre / Semis", icon: Sprout },
-  { href: "/meteo", label: "Météo & Capteurs", icon: CloudSun },
-  { href: "/bilans", label: "Bilans", icon: BarChart3 },
-]
-
-const ADMIN_ITEMS = [
-  { href: "/profil", label: "Profil", icon: User },
-  { href: "/parametres", label: "Paramètres", icon: Settings },
-  { href: "/contact", label: "Contact / Support", icon: LifeBuoy },
+const NAV_ITEMS: { href: string; key: TranslationKey; icon: typeof Flower2 }[] = [
+  { href: "/", key: "nav_catalogue", icon: Flower2 },
+  { href: "/croisement", key: "nav_croisement", icon: Flower2 },
+  { href: "/serre", key: "nav_serre", icon: Sprout },
+  { href: "/meteo", key: "nav_meteo", icon: CloudSun },
+  { href: "/bilans", key: "nav_bilans", icon: BarChart3 },
 ]
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const { user, signOut } = useAuth()
+  const { t } = useLanguage()
   const [menuOpen, setMenuOpen] = useState(false)
 
   return (
@@ -40,6 +37,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </span>
               <span className="font-serif text-lg text-foreground">Sélection Rosiers</span>
             </Link>
+
             <nav className="ml-auto hidden items-center gap-1 md:flex">
               {NAV_ITEMS.map((item) => {
                 const active = pathname === item.href
@@ -55,34 +53,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     )}
                   >
                     <item.icon className="size-4" />
-                    {item.label}
+                    {t(item.key)}
                   </Link>
                 )
               })}
             </nav>
-            <div className="ml-auto flex items-center gap-1 md:ml-2">
+
+            {/* Profil / Paramètres : toujours en haut à droite, distincts de la nav principale */}
+            <div className="ml-2 flex items-center gap-1 border-l border-border pl-2">
               <div className="hidden items-center gap-1 md:flex">
-                {ADMIN_ITEMS.map((item) => {
-                  const active = pathname === item.href
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      className={cn(
-                        "flex items-center gap-1.5 rounded-md px-3 py-2 text-sm transition-colors",
-                        active
-                          ? "bg-primary/10 text-primary"
-                          : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                      )}
-                    >
-                      <item.icon className="size-4" />
-                      {item.label}
-                    </Link>
-                  )
-                })}
+                <Link
+                  href="/profil"
+                  title={t("nav_profil")}
+                  aria-label={t("nav_profil")}
+                  className={cn(
+                    "flex size-9 items-center justify-center rounded-md transition-colors",
+                    pathname === "/profil" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <User className="size-4" />
+                </Link>
+                <Link
+                  href="/parametres"
+                  title={t("nav_parametres")}
+                  aria-label={t("nav_parametres")}
+                  className={cn(
+                    "flex size-9 items-center justify-center rounded-md transition-colors",
+                    pathname === "/parametres" ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  )}
+                >
+                  <Settings className="size-4" />
+                </Link>
                 {user && (
-                  <Button variant="ghost" size="sm" onClick={() => signOut()} className="gap-1.5">
-                    <LogOut className="size-4" /> Déconnexion
+                  <Button variant="ghost" size="sm" onClick={() => signOut()} className="gap-1.5" title={t("nav_logout")}>
+                    <LogOut className="size-4" />
                   </Button>
                 )}
               </div>
@@ -94,9 +98,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               </button>
             </div>
           </div>
+
           {menuOpen ? (
             <nav className="flex flex-col gap-1 border-t border-border px-4 py-3 md:hidden">
-              {[...NAV_ITEMS, ...ADMIN_ITEMS].map((item) => {
+              {NAV_ITEMS.map((item) => {
                 const active = pathname === item.href
                 return (
                   <Link
@@ -111,13 +116,29 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     )}
                   >
                     <item.icon className="size-4" />
-                    {item.label}
+                    {t(item.key)}
                   </Link>
                 )
               })}
+              <div className="mt-1 border-t border-border pt-1">
+                <Link
+                  href="/profil"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <User className="size-4" /> {t("nav_profil")}
+                </Link>
+                <Link
+                  href="/parametres"
+                  onClick={() => setMenuOpen(false)}
+                  className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                >
+                  <Settings className="size-4" /> {t("nav_parametres")}
+                </Link>
+              </div>
               {user && (
                 <Button variant="ghost" size="sm" onClick={() => signOut()} className="mt-1 gap-1.5">
-                  <LogOut className="size-4" /> Déconnexion
+                  <LogOut className="size-4" /> {t("nav_logout")}
                 </Button>
               )}
             </nav>

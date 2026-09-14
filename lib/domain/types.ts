@@ -4,7 +4,7 @@
 // Hiérarchie de sélection :
 //   Croisement (Cross) "A"
 //     -> Fruit / récolte (HipHarvest) "Aa"
-//        -> Semis (Seedling) "Aa1", "Aa2", ...
+//         -> Semis (Seedling) "Aa1", "Aa2", ...
 //
 // Note sur les IDs : un seul champ `id` sert d'identifiant unifié (voir ids.ts).
 // Chaque entité porte aussi un `code` métier stable et lisible (ex. "Aa1")
@@ -101,6 +101,11 @@ export interface Seedling extends Entity {
   index: number
   status: SeedlingStatus
   remarks: string
+  /** Propriétés additionnelles pour la traçabilité N2 */
+  seedling_code?: string
+  evaluation_status?: string
+  free_notes?: string
+  is_promoted_to_variety?: boolean
 }
 
 /** Serre. */
@@ -117,4 +122,3 @@ export interface GreenhouseTable extends Entity {
   capacity: number | null
   remarks: string
 }
-

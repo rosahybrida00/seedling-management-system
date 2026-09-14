@@ -4,11 +4,12 @@ import { useEffect, useState, useMemo } from "react"
 import Link from "next/link"
 import { Search, Plus, Upload, Download, Trash2, Flower2, SlidersHorizontal, Pencil } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { WeatherBanner } from "@/components/weather/weather-banner"
+import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
 import { Card, Badge, EmptyState, Field, Input } from "@/components/breeding/ui"
 import { CatalogFilterModal } from "@/components/breeding/catalog-filter-modal"
 import { VarietyEditModal } from "@/components/breeding/variety-edit-modal"
+import { CatalogOptionsMenu } from "@/components/breeding/options-menu"
 import { detectTraitsFromDescription, resolveTrait } from "@/lib/domain/description-traits"
 
 // Catalogue GÉNÉRAL Rosa Hybrida — table `varieties` (~1059 variétés, scrapées depuis
@@ -37,6 +38,14 @@ export interface VarietyRecord {
 const PAGE_SIZE = 1000
 
 export default function CatalogPage() {
+  return (
+    <AppShell>
+      <CatalogPageContent />
+    </AppShell>
+  )
+}
+
+function CatalogPageContent() {
   const [varieties, setVarieties] = useState<VarietyRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState("")
@@ -207,57 +216,47 @@ export default function CatalogPage() {
   }
 
   return (
-    <div className="min-h-svh bg-background">
-      <WeatherBanner />
-      <div className="mx-auto max-w-6xl px-4 py-6 md:px-6 md:py-8">
-        <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="font-serif text-2xl text-foreground">Catalogue des Rosiers</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              {filtered.length} variété{filtered.length > 1 ? "s" : ""} — recherchez par nom, obtenteur, type ou parentage.
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setShowAddForm((v) => !v)} size="sm" className="gap-1.5">
-              <Plus className="size-4" /> Ajouter
-            </Button>
-            <Button variant="outline" size="sm" className="gap-1.5" disabled>
-              <Upload className="size-4" /> Importer
-            </Button>
-            <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
-              <Download className="size-4" /> Exporter
-            </Button>
-            <Button variant="destructive" size="sm" onClick={handleDeleteAll} className="gap-1.5">
-              <Trash2 className="size-4" /> Tout supprimer
-            </Button>
-          </div>
+    <div className="flex flex-col gap-5">
+      <div className="mb-1 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="font-serif text-2xl text-foreground">Catalogue des Rosiers</h1>
+          <p className="mt-0.5 text-sm text-muted-foreground">
+            {filtered.length} variété{filtered.length > 1 ? "s" : ""} — recherchez par nom, obtenteur, type ou parentage.
+          </p>
         </div>
+      </div>
 
-        <div className="mb-5 flex gap-3">
-          <div className="relative flex-1 min-w-[200px]">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Rechercher (nom, obtenteur, type...)"
-              className="pl-9"
-            />
-          </div>
-          <Button
-            variant="outline"
-            size="icon"
-            className="relative shrink-0"
-            aria-label="Filtres"
-            onClick={() => setShowFilters(true)}
-          >
-            <SlidersHorizontal className="size-4" />
-            {activeFilterCount > 0 ? (
-              <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground">
-                {activeFilterCount}
-              </span>
-            ) : null}
-          </Button>
+      <div className="mb-1 flex gap-3">
+        <div className="relative flex-1 min-w-[200px]">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Rechercher (nom, obtenteur, type...)"
+            className="pl-9"
+          />
         </div>
+        <Button
+          variant="outline"
+          size="icon"
+          className="relative shrink-0"
+          aria-label="Filtres"
+          onClick={() => setShowFilters(true)}
+        >
+          <SlidersHorizontal className="size-4" />
+          {activeFilterCount > 0 ? (
+            <span className="absolute -right-1 -top-1 flex size-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-accent-foreground">
+              {activeFilterCount}
+            </span>
+          ) : null}
+        </Button>
+        <CatalogOptionsMenu
+          onAdd={() => setShowAddForm((v) => !v)}
+          onImport={() => {}}
+          onExport={handleExport}
+          onDeleteAll={handleDeleteAll}
+        />
+      </div>
 
         {showAddForm ? (
           <Card className="mb-5 p-4">
@@ -381,7 +380,6 @@ export default function CatalogPage() {
             ))}
           </div>
         )}
-      </div>
 
       <CatalogFilterModal
         open={showFilters}

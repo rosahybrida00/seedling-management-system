@@ -141,7 +141,46 @@ export interface HipHarvest {
   updated_at: string
 }
 
-/** Semis avec grille d'évaluation Aa1 Phase 2. */
+/** Croisement avec nomenclature, climat et traçabilité des graines (N2). */
+export interface Cross {
+  id: string
+  user_id: string
+  code: string
+  seed_parent: string | null
+  pollen_parent: string | null
+  pollination_date: string | null
+  remarks: string
+  base_syllable: string | null
+  lot_letter: string | null
+  flower_letter: string | null
+  climate_data: Record<string, unknown> | null
+  status: "En cours" | "Récolté" | "Avorté" | null
+  abort_cause: string | null
+  harvest_data: Record<string, unknown> | null
+  total_seeds: number | null
+  germinated_seeds: number | null
+  failed_seeds: number | null
+  failure_attribution: string | null
+  automatic_synthesis: string | null
+  free_notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Traitement phytosanitaire lié à un croisement. */
+export interface Treatment {
+  id: string
+  user_id: string
+  cross_id: string | null
+  product_name: string
+  treatment_type: string | null
+  repetition_count: number
+  applied_at: string
+  notes: string | null
+  created_at: string
+}
+
+/** Semis avec grille d'évaluation Aa1 Phase 2 + traçabilité N2. */
 export interface Seedling {
   id: string
   user_id: string
@@ -156,6 +195,10 @@ export interface Seedling {
   motif_elimination: string | null
   critere_selection: string | null
   auto_report: string | null
+  seedling_code: string | null
+  evaluation_status: "Évaluation" | "Sélectionné" | "Éliminé" | null
+  is_promoted_to_variety: boolean | null
+  free_notes: string | null
   created_at: string
   updated_at: string
 }

@@ -1,11 +1,13 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { User, Save, Upload } from "lucide-react"
+import { User, Save, Upload, Lock, Flower2, Sprout, ArrowUpCircle, BookOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
 import { Card, Field, Input, SectionHeading, Badge } from "@/components/breeding/ui"
+import { formatDate } from "@/components/breeding/format"
+import { useLanguage } from "@/lib/i18n/language-provider"
 
 interface Profile {
   obtenteur_name: string | null
@@ -18,6 +20,13 @@ interface Profile {
   subscription: string
 }
 
+interface ActivityStats {
+  crosses: number
+  seedlings: number
+  promoted: number
+  varieties: number
+}
+
 export default function ProfilPage() {
   return (
     <AppShell>
@@ -27,10 +36,19 @@ export default function ProfilPage() {
 }
 
 function ProfilContent() {
+  const { t } = useLanguage()
+  const [email, setEmail] = useState<string | null>(null)
+  const [memberSince, setMemberSince] = useState<string | null>(null)
   const [profile, setProfile] = useState<Profile | null>(null)
+  const [stats, setStats] = useState<ActivityStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+
+  const [passwords, setPasswords] = useState({ next: "", confirm: "" })
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordMessage, setPasswordMessage] = useState<string | null>(null)
+  const [passwordError, setPasswordError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchProfile()
@@ -39,13 +57,28 @@ function ProfilContent() {
   async function fetchProfile() {
     setLoading(true)
     const { data: userData } = await supabase.auth.getUser()
-    if (!userData.user) return
-    const { data } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", userData.user.id)
-      .maybeSingle()
-    if (data) setProfile(data as Profile)
+    if (!userData.user) {
+      setLoading(false)
+      return
+    }
+    setEmail(userData.user.email ?? null)
+    setMemberSince(userData.user.created_at ?? null)
+
+    const [{ data: profileData }, crossesCount, seedlingsCount, promotedCount, varietiesCount] = await Promise.all([
+      supabase.from("profiles").select("*").eq("id", userData.user.id).maybeSingle(),
+      supabase.from("crosses").select("id", { count: "exact", head: true }).eq("user_id", userData.user.id),
+      supabase.from("seedlings").select("id", { count: "exact", head: true }),
+      supabase.from("seedlings").select("id", { count: "exact", head: true }).eq("is_promoted_to_variety", true),
+      supabase.from("varieties").select("id", { count: "exact", head: true }).eq("created_by", userData.user.id),
+    ])
+
+    if (profileData) setProfile(profileData as Profile)
+    setStats({
+      crosses: crossesCount.count ?? 0,
+      seedlings: seedlingsCount.count ?? 0,
+      promoted: promotedCount.count ?? 0,
+      varieties: varietiesCount.count ?? 0,
+    })
     setLoading(false)
   }
 
@@ -81,6 +114,28 @@ function ProfilContent() {
     setProfile({ ...profile!, avatar_url: urlData.publicUrl })
   }
 
+  async function handleChangePassword() {
+    setPasswordError(null)
+    setPasswordMessage(null)
+    if (passwords.next.length < 8) {
+      setPasswordError("Le mot de passe doit contenir au moins 8 caractères.")
+      return
+    }
+    if (passwords.next !== passwords.confirm) {
+      setPasswordError("Les deux mots de passe ne correspondent pas.")
+      return
+    }
+    setPasswordSaving(true)
+    const { error } = await supabase.auth.updateUser({ password: passwords.next })
+    setPasswordSaving(false)
+    if (error) {
+      setPasswordError(error.message)
+      return
+    }
+    setPasswordMessage("Mot de passe mis à jour.")
+    setPasswords({ next: "", confirm: "" })
+  }
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -91,10 +146,7 @@ function ProfilContent() {
 
   return (
     <div className="flex flex-col gap-5">
-      <SectionHeading
-        title="Profil Utilisateur"
-        description="Votre fiche d'hybrideur : identité métier, affixe et localisation."
-      />
+      <SectionHeading title={t("profil_title")} description={t("profil_description")} />
 
       <div className="grid gap-5 lg:grid-cols-3">
         <Card className="p-5 lg:col-span-1">
@@ -116,10 +168,22 @@ function ProfilContent() {
             <Badge tone={profile?.subscription === "pro" ? "success" : "neutral"}>
               {profile?.subscription === "pro" ? "Abonnement Pro" : "Compte Gratuit"}
             </Badge>
+
+            <div className="w-full border-t border-border pt-4 text-sm">
+              <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {t("profil_account_section")}
+              </p>
+              <p className="text-foreground">{profile?.obtenteur_name || "—"}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{t("profil_email")}</p>
+              <p className="text-foreground">{email ?? "—"}</p>
+              <p className="mt-2 text-xs text-muted-foreground">{t("profil_member_since")}</p>
+              <p className="text-foreground">{memberSince ? formatDate(memberSince) : "—"}</p>
+            </div>
           </div>
         </Card>
 
         <Card className="p-5 lg:col-span-2">
+          <h3 className="mb-4 font-serif text-lg text-foreground">Informations de structure</h3>
           <div className="grid gap-4 sm:grid-cols-2">
             <Field label="Nom d'obtenteur / Pseudo">
               <Input
@@ -172,6 +236,59 @@ function ProfilContent() {
           </div>
         </Card>
       </div>
+
+      <Card className="p-5">
+        <h3 className="mb-4 flex items-center gap-2 font-serif text-lg text-foreground">
+          <Lock className="size-4 text-primary" /> {t("profil_security_section")}
+        </h3>
+        {passwordMessage ? <p className="mb-3 text-sm text-primary">{passwordMessage}</p> : null}
+        {passwordError ? <p className="mb-3 text-sm text-destructive">{passwordError}</p> : null}
+        <div className="grid gap-4 sm:grid-cols-2 lg:w-2/3">
+          <Field label={t("profil_new_password")}>
+            <Input
+              type="password"
+              value={passwords.next}
+              onChange={(e) => setPasswords({ ...passwords, next: e.target.value })}
+              placeholder="••••••••"
+            />
+          </Field>
+          <Field label={t("profil_confirm_password")}>
+            <Input
+              type="password"
+              value={passwords.confirm}
+              onChange={(e) => setPasswords({ ...passwords, confirm: e.target.value })}
+              placeholder="••••••••"
+            />
+          </Field>
+        </div>
+        <div className="mt-4">
+          <Button variant="outline" onClick={handleChangePassword} disabled={passwordSaving} className="gap-1.5">
+            <Lock className="size-4" /> {passwordSaving ? "…" : t("profil_change_password")}
+          </Button>
+        </div>
+      </Card>
+
+      <Card className="p-5">
+        <h3 className="mb-4 font-serif text-lg text-foreground">{t("profil_activity_section")}</h3>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+          <StatTile icon={<Flower2 className="size-4" />} label={t("profil_crosses")} value={stats?.crosses ?? 0} />
+          <StatTile icon={<Sprout className="size-4" />} label={t("profil_seedlings")} value={stats?.seedlings ?? 0} />
+          <StatTile icon={<ArrowUpCircle className="size-4" />} label={t("profil_promoted")} value={stats?.promoted ?? 0} />
+          <StatTile icon={<BookOpen className="size-4" />} label={t("profil_varieties")} value={stats?.varieties ?? 0} />
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+function StatTile({ icon, label, value }: { icon: React.ReactNode; label: string; value: number }) {
+  return (
+    <div className="rounded-md border border-border bg-muted/30 p-3">
+      <div className="flex items-center gap-1.5 text-muted-foreground">
+        {icon}
+        <span className="text-xs">{label}</span>
+      </div>
+      <p className="mt-1 font-serif text-2xl text-foreground">{value}</p>
     </div>
   )
 }
