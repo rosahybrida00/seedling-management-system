@@ -85,6 +85,7 @@ interface VarietySuggestion {
   id: string
   name: string
   commercial_name: string | null
+  source: "catalogue" | "semis"
 }
 
 const CROSS_STATUS_LABELS: Record<string, string> = {
@@ -185,6 +186,32 @@ function CroisementContent() {
     fetchData()
   }, [])
 
+  async function searchParents(query: string) {
+    const escapedQuery = query.replace(/[%,()]/g, " ").trim()
+    const [{ data: varieties }, { data: seedlings }] = await Promise.all([
+      supabase
+        .from("varieties")
+        .select("id, name, commercial_name")
+        .or(`name.ilike.%${escapedQuery}%,commercial_name.ilike.%${escapedQuery}%`)
+        .limit(6),
+      supabase
+        .from("seedlings")
+        .select("id, code")
+        .ilike("code", `%${escapedQuery}%`)
+        .limit(6),
+    ])
+
+    return [
+      ...(varieties ?? []).map((item) => ({ ...item, source: "catalogue" as const })),
+      ...(seedlings ?? []).map((item) => ({
+        id: item.id,
+        name: item.code,
+        commercial_name: "Semis",
+        source: "semis" as const,
+      })),
+    ].slice(0, 8)
+  }
+
   useEffect(() => {
     const query = form.seedParent.trim()
     if (query.length < 1) {
@@ -194,16 +221,9 @@ function CroisementContent() {
     }
 
     const timer = setTimeout(async () => {
-      const { data } = await supabase
-        .from("varieties")
-        .select("id, name, commercial_name")
-        .or(`name.ilike.%${query}%,commercial_name.ilike.%${query}%`)
-        .limit(6)
-      
-      if (data) {
-        setSeedSuggestions(data as VarietySuggestion[])
-        setShowSeedSugg(true)
-      }
+      const data = await searchParents(query)
+      setSeedSuggestions(data)
+      setShowSeedSugg(true)
     }, 200)
 
     return () => clearTimeout(timer)
@@ -218,16 +238,9 @@ function CroisementContent() {
     }
 
     const timer = setTimeout(async () => {
-      const { data } = await supabase
-        .from("varieties")
-        .select("id, name, commercial_name")
-        .or(`name.ilike.%${query}%,commercial_name.ilike.%${query}%`)
-        .limit(6)
-      
-      if (data) {
-        setPollenSuggestions(data as VarietySuggestion[])
-        setShowPollenSugg(true)
-      }
+      const data = await searchParents(query)
+      setPollenSuggestions(data)
+      setShowPollenSugg(true)
     }, 200)
 
     return () => clearTimeout(timer)
@@ -301,11 +314,32 @@ function CroisementContent() {
       pollen_parent_id: form.pollenParentId || null,
     }
 
-    const { error } = await supabase.from("crosses").insert(payload)
+    const { data: createdCross, error } = await supabase.from("crosses").insert(payload).select("id").single()
     if (error) {
       console.error("Erreur lors de la création du croisement :", error)
       alert(`Erreur : ${error.message}`)
       return
+    }
+
+    const missingParents = [
+      !form.seedParentId && form.seedParent.trim()
+        ? { name: seedVal, role: "seed" as const, label: "porte-graine" }
+        : null,
+      !form.pollenParentId && form.pollenParent.trim()
+        ? { name: pollenVal, role: "pollen" as const, label: "pollen" }
+        : null,
+    ].filter(Boolean) as Array<{ name: string; role: "seed" | "pollen"; label: string }>
+
+    if (createdCross && missingParents.length > 0) {
+      await supabase.from("parent_alerts").insert(
+        missingParents.map((parent) => ({
+          parent_name: parent.name,
+          parent_role: parent.role,
+          cross_id: createdCross.id,
+          message: `Ajouter le parent ${parent.label} « ${parent.name} » au catalogue.`,
+        })),
+      )
+      alert(`Croisement créé. Parent à ajouter au catalogue : ${missingParents.map((parent) => parent.name).join(", ")}.`)
     }
 
     setForm({
@@ -504,7 +538,7 @@ function CroisementContent() {
             <Card className="p-4">
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="relative">
-                  <Field label="Parent porte-graine (♀)" hint="Tapez pour chercher dans le catalogue">
+                  <Field label="Parent porte-graine (♀)" hint="Catalogue et tous vos semis">
                     <Input
                       value={form.seedParent}
                       onChange={(e) => setForm({ ...form, seedParent: e.target.value, seedParentId: "" })}
@@ -527,6 +561,7 @@ function CroisementContent() {
                           {s.commercial_name && s.commercial_name !== s.name ? (
                             <span className="text-muted-foreground"> ({s.commercial_name})</span>
                           ) : null}
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-primary/70">{s.source}</span>
                         </div>
                       ))}
                     </div>
@@ -534,7 +569,7 @@ function CroisementContent() {
                 </div>
 
                 <div className="relative">
-                  <Field label="Parent pollen (♂)" hint="Tapez pour chercher dans le catalogue">
+                  <Field label="Parent pollen (♂)" hint="Catalogue et tous vos semis">
                     <Input
                       value={form.pollenParent}
                       onChange={(e) => setForm({ ...form, pollenParent: e.target.value, pollenParentId: "" })}
@@ -557,6 +592,7 @@ function CroisementContent() {
                           {s.commercial_name && s.commercial_name !== s.name ? (
                             <span className="text-muted-foreground"> ({s.commercial_name})</span>
                           ) : null}
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-primary/70">{s.source}</span>
                         </div>
                       ))}
                     </div>
