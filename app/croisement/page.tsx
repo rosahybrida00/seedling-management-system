@@ -275,6 +275,12 @@ function CroisementContent() {
   async function createCross() {
     if (!form.seedParent.trim() && !form.pollenParent.trim()) return
 
+    const { data: authData } = await supabase.auth.getUser()
+    if (!authData.user) {
+      alert("Vous devez être connecté pour enregistrer un croisement.")
+      return
+    }
+
     const seedVal = form.seedParent.trim() ? form.seedParent.trim() : "Inconnu"
     const pollenVal = form.pollenParent.trim() ? form.pollenParent.trim() : "Inconnu"
 
@@ -297,6 +303,7 @@ function CroisementContent() {
     if (form.stressNotes) climateData.stress_notes = form.stressNotes
 
     const payload: Record<string, any> = {
+      user_id: authData.user.id,
       code: fruitCode,
       seed_parent: seedVal,
       pollen_parent: pollenVal,
@@ -316,8 +323,15 @@ function CroisementContent() {
 
     const { data: createdCross, error } = await supabase.from("crosses").insert(payload).select("id").single()
     if (error) {
-      console.error("Erreur lors de la création du croisement :", error)
-      alert(`Erreur : ${error.message}`)
+      const details = [error.message, error.details, error.hint, error.code].filter(Boolean).join(" — ")
+      console.error("[v0] Erreur lors de la création du croisement :", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        payload,
+      })
+      alert(`Erreur lors de la création du croisement : ${details || "échec de l’insertion"}`)
       return
     }
 
