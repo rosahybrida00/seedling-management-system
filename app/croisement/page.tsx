@@ -294,14 +294,11 @@ function CroisementContent() {
       flower_letter: flower,
       climate_data: climateData,
       status: "En cours",
-      pollinated_flowers_count: parseInt(form.pollinatedFlowersCount, 10) || 1,
-      pollen_type: form.pollenType,
-      pollen_lot_id: form.pollenType === "conservé" ? form.pollenLotId || null : null,
     }
 
-    if (form.seedParentId) payload.seed_parent_id = form.seedParentId
-    if (form.pollenParentId) payload.pollen_parent_id = form.pollenParentId
-
+    // Keep the insert aligned with the columns created by the current Supabase migrations.
+    // The form still collects these values for the workflow, but the connected schema does
+    // not yet expose pollination-count, pollen-lot, or parent-id columns on crosses.
     const { error } = await supabase.from("crosses").insert(payload)
     if (error) {
       console.error("Erreur lors de la création du croisement :", error)
