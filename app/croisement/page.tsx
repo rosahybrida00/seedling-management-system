@@ -81,6 +81,17 @@ interface Treatment {
   notes: string | null
 }
 
+interface HarvestedSeed {
+  id: string
+  fruit_id: string
+  seed_name: string
+  seed_number: number
+  harvest_year: number
+  status: string
+  greenhouse_id: string | null
+  greenhouse_table_id: string | null
+}
+
 interface CrossFruit {
   id: string
   cross_id: string
@@ -1059,6 +1070,23 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
   const [editing, setEditing] = useState<string | null>(null)
   const [seedCount, setSeedCount] = useState("0")
   const [checklist, setChecklist] = useState<Record<string, boolean>>({})
+  const [seeds, setSeeds] = useState<HarvestedSeed[]>([])
+  const [greenhouses, setGreenhouses] = useState<Array<{ id: string; name: string }>>([])
+  const [tables, setTables] = useState<Array<{ id: string; greenhouse_id: string; name: string }>>([])
+  const [greenhouseId, setGreenhouseId] = useState("")
+  const [tableId, setTableId] = useState("")
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from("harvested_seeds").select("*").order("seed_name"),
+      supabase.from("greenhouses").select("id,name").order("name"),
+      supabase.from("greenhouse_tables").select("id,greenhouse_id,name").order("name"),
+    ]).then(([seedResult, greenhouseResult, tableResult]) => {
+      if (seedResult.data) setSeeds(seedResult.data as HarvestedSeed[])
+      if (greenhouseResult.data) setGreenhouses(greenhouseResult.data)
+      if (tableResult.data) setTables(tableResult.data)
+    })
+  }, [fruits.length])
 
   async function saveFruit(fruit: CrossFruit) {
     const count = Math.max(0, Number.parseInt(seedCount, 10) || 0)
@@ -1075,7 +1103,7 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
     }
     if (count > 0) {
       const year = new Date().getFullYear()
-      await supabase.from("harvested_seeds").upsert(
+      const { data: savedSeeds } = await supabase.from("harvested_seeds").upsert(
         Array.from({ length: count }, (_, index) => ({
           user_id: userData.user.id,
           fruit_id: fruit.id,
@@ -1084,7 +1112,14 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
           harvest_year: year,
         })),
         { onConflict: "fruit_id,seed_number" },
-      )
+      ).select("id")
+      if (greenhouseId && tableId && savedSeeds?.length) {
+        await supabase.from("harvested_seeds").update({
+        greenhouse_id: greenhouseId,
+        greenhouse_table_id: tableId,
+        status: "plantee",
+      }).in("id", savedSeeds.map((seed) => seed.id))
+      }
     }
     setEditing(null)
     onRefresh()
@@ -1104,9 +1139,18 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
               <span className="text-xs text-muted-foreground">{cross?.seed_parent ?? "?"} × {cross?.pollen_parent ?? "?"}</span>
               <Badge tone={fruit.status === "récolté" ? "success" : "warning"}>{fruit.status}</Badge>
               <span className="text-xs text-muted-foreground">{fruit.seed_count} graine(s)</span>
+              {seeds.filter((seed) => seed.fruit_id === fruit.id).length > 0 ? <span className="w-full text-[11px] text-muted-foreground">{seeds.filter((seed) => seed.fruit_id === fruit.id).map((seed) => `${seed.seed_name}${seed.greenhouse_table_id ? " · plantée" : ""}`).join(", ")}</span> : null}
               <div className="ml-auto flex items-center gap-2">
                 {isEditing ? <>
                   <Input className="w-24" type="number" min={0} value={seedCount} onChange={(event) => setSeedCount(event.target.value)} aria-label={`Nombre de graines pour ${fruit.fruit_name}`} />
+                  <Select value={greenhouseId} onChange={(event) => { setGreenhouseId(event.target.value); setTableId("") }} aria-label="Serre de plantation">
+                    <option value="">Serre</option>
+                    {greenhouses.map((greenhouse) => <option key={greenhouse.id} value={greenhouse.id}>{greenhouse.name}</option>)}
+                  </Select>
+                  <Select value={tableId} onChange={(event) => setTableId(event.target.value)} aria-label="Table de plantation">
+                    <option value="">Table</option>
+                    {tables.filter((table) => table.greenhouse_id === greenhouseId).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
+                  </Select>
                   <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={Boolean(checklist.mature)} onChange={(event) => setChecklist({ ...checklist, mature: event.target.checked })} /> mûr</label>
                   <Button size="sm" onClick={() => saveFruit(fruit)}>Enregistrer</Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
