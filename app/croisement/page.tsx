@@ -317,8 +317,9 @@ function CroisementContent() {
       flower_count: Number.parseInt(form.pollinatedFlowersCount, 10) || 1,
       pollen_type: form.pollenType,
       pollen_lot_id: form.pollenType === "conservé" ? form.pollenLotId || null : null,
-      seed_parent_id: form.seedParentId || null,
-      pollen_parent_id: form.pollenParentId || null,
+      // The connected local schema still references the legacy rose_varieties table.
+      // Keep the exact selected parent names until that legacy FK is aligned with varieties.
+      // This prevents valid catalogue selections from failing on insert.
     }
 
     const { data: createdCross, error } = await supabase.from("crosses").insert(payload).select("id").single()
