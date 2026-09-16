@@ -203,9 +203,6 @@ function CroisementContent() {
   const [pollenSuggestions, setPollenSuggestions] = useState<VarietySuggestion[]>([])
   const [showSeedSugg, setShowSeedSugg] = useState(false)
   const [showPollenSugg, setShowPollenSugg] = useState(false)
-  const [fruitDrafts, setFruitDrafts] = useState<Array<{ name: string; notes: string; ready: boolean }>>([])
-  const [historicalWeather, setHistoricalWeather] = useState<Record<string, unknown> | null>(null)
-  const [weatherLoading, setWeatherLoading] = useState(false)
 
   useEffect(() => {
     fetchData()
@@ -270,29 +267,6 @@ function CroisementContent() {
 
     return () => clearTimeout(timer)
   }, [form.pollenParent])
-
-  useEffect(() => {
-    const count = Math.max(1, Number.parseInt(form.pollinatedFlowersCount, 10) || 1)
-    const base = generateBaseSyllable(form.seedParent.trim() || "Inconnu", form.pollenParent.trim() || "Inconnu")
-    const letter = lotLetter(0)
-    setFruitDrafts(Array.from({ length: count }, (_, index) => ({
-      name: `${base}${letter}-${flowerLetter(index)}`,
-      notes: fruitDrafts[index]?.notes ?? "",
-      ready: fruitDrafts[index]?.ready ?? false,
-    })))
-  }, [form.pollinatedFlowersCount, form.seedParent, form.pollenParent])
-
-  useEffect(() => {
-    let cancelled = false
-    setWeatherLoading(true)
-    fetchHistoricalWeather(form.pollinationDate).then((data) => {
-      if (!cancelled) {
-        setHistoricalWeather(data)
-        setWeatherLoading(false)
-      }
-    })
-    return () => { cancelled = true }
-  }, [form.pollinationDate])
 
   useEffect(() => {
     const todayStr = new Date().toISOString().split("T")[0]
@@ -388,8 +362,6 @@ function CroisementContent() {
     const payload: Record<string, any> = {
       user_id: authData.user.id,
       code: fruitCode,
-      idempotency_key: `${authData.user.id}:${form.pollinationDate}:${seedVal}:${pollenVal}:${Date.now()}`,
-
       seed_parent: seedVal,
       pollen_parent: pollenVal,
       pollination_date: fromDateInput(form.pollinationDate),
@@ -426,10 +398,9 @@ function CroisementContent() {
       const fruitsToCreate = Array.from({ length: flowerCount }, (_, index) => ({
         user_id: authData.user.id,
         cross_id: createdCross.id,
-        fruit_name: fruitDrafts[index]?.name || `${base}${lot}-${flowerLetter(index)}`,
+        fruit_name: `${base}${lot}-${flowerLetter(index)}`,
         flower_index: index + 1,
-        climate_data: { ...climateData, notes: fruitDrafts[index]?.notes ?? "" },
-        checklist: { ready: fruitDrafts[index]?.ready ?? false },
+        climate_data: climateData,
       }))
       await supabase.from("cross_fruits").insert(fruitsToCreate)
     }
@@ -726,20 +697,9 @@ function CroisementContent() {
                   <Input type="date" value={form.pollinationDate} onChange={(e) => setForm({ ...form, pollinationDate: e.target.value })} />
                 </Field>
 
-  <Field label="Nombre de fleurs pollinisées" hint="Quantité de fleurs de ce lot">
-  <Input type="number" min={1} value={form.pollinatedFlowersCount} onChange={(e) => setForm({ ...form, pollinatedFlowersCount: e.target.value })} />
-  </Field>
-  <div className="sm:col-span-2 lg:col-span-3 rounded-md border border-primary/20 bg-primary/5 p-3 text-xs">
-    {weatherLoading ? `Chargement de la météo du ${form.pollinationDate}…` : historicalWeather && Object.keys(historicalWeather).length > 0 ? <>Météo historique du <strong>{form.pollinationDate}</strong> : {String(historicalWeather.temperature_mean ?? "—")} °C, {String(historicalWeather.humidity_mean ?? "—")} % d&apos;humidité, {String(historicalWeather.precipitation_sum ?? "—")} mm de pluie.</> : <>Météo historique indisponible pour le {form.pollinationDate}.</>}
-  </div>
-  <div className="sm:col-span-2 lg:col-span-3 grid gap-2 rounded-md border border-border p-3">
-    <p className="text-xs font-medium">Fruits générés — vérifiez ou complétez chaque nom</p>
-    {fruitDrafts.map((fruit, index) => <div key={`${fruit.name}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
-      <Input value={fruit.name} onChange={(e) => setFruitDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, name: e.target.value } : item))} aria-label={`Nom du fruit ${index + 1}`} />
-      <Input value={fruit.notes} onChange={(e) => setFruitDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, notes: e.target.value } : item))} placeholder="Notes / capteur" aria-label={`Notes du fruit ${index + 1}`} />
-      <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={fruit.ready} onChange={(e) => setFruitDrafts((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ready: e.target.checked } : item))} /> suivi actif</label>
-    </div>)}
-  </div>
+                <Field label="Nombre de fleurs pollinisées" hint="Quantité de fleurs de ce lot">
+                  <Input type="number" min={1} value={form.pollinatedFlowersCount} onChange={(e) => setForm({ ...form, pollinatedFlowersCount: e.target.value })} />
+                </Field>
 
                 <Field label="Type de pollen" hint="Sélectionnez l'origine du pollen">
                   <Select value={form.pollenType} onChange={(e) => setForm({ ...form, pollenType: e.target.value })}>
