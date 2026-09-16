@@ -81,6 +81,16 @@ interface Treatment {
   notes: string | null
 }
 
+interface CrossFruit {
+  id: string
+  cross_id: string
+  fruit_name: string
+  flower_index: number
+  status: string
+  seed_count: number
+  checklist: Record<string, boolean>
+}
+
 interface VarietySuggestion {
   id: string
   name: string
@@ -157,7 +167,8 @@ function CroisementContent() {
   const [pollenLots, setPollenLots] = useState<PollenLot[]>([])
   const [treatments, setTreatments] = useState<Treatment[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<"crosses" | "pollen">("crosses")
+  const [activeTab, setActiveTab] = useState<"crosses" | "pollen" | "fruits">("crosses")
+  const [fruits, setFruits] = useState<CrossFruit[]>([])
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   
@@ -259,16 +270,18 @@ function CroisementContent() {
 
   async function fetchData() {
     setLoading(true)
-    const [{ data: cData }, { data: hData }, { data: pData }, { data: tData }] = await Promise.all([
+    const [{ data: cData }, { data: hData }, { data: pData }, { data: tData }, { data: fData }] = await Promise.all([
       supabase.from("crosses").select("*").order("created_at", { ascending: false }),
       supabase.from("hip_harvests").select("*").order("created_at", { ascending: false }),
       supabase.from("pollen_lots").select("*").order("created_at", { ascending: false }),
       supabase.from("treatments").select("*").order("applied_at", { ascending: false }),
+      supabase.from("cross_fruits").select("*").order("created_at", { ascending: false }),
     ])
     if (cData) setCrosses(cData as Cross[])
     if (hData) setHarvests(hData as HipHarvest[])
     if (pData) setPollenLots(pData as PollenLot[])
     if (tData) setTreatments(tData as Treatment[])
+    if (fData) setFruits(fData as CrossFruit[])
     setLoading(false)
   }
 
@@ -367,6 +380,18 @@ function CroisementContent() {
       })
       alert(`Erreur lors de la création du croisement : ${details || "échec de l’insertion"}`)
       return
+    }
+
+    if (createdCross) {
+      const flowerCount = Number.parseInt(form.pollinatedFlowersCount, 10) || 1
+      const fruitsToCreate = Array.from({ length: flowerCount }, (_, index) => ({
+        user_id: authData.user.id,
+        cross_id: createdCross.id,
+        fruit_name: `${base}${lot}-${flowerLetter(index)}`,
+        flower_index: index + 1,
+        climate_data: climateData,
+      }))
+      await supabase.from("cross_fruits").insert(fruitsToCreate)
     }
 
     const missingParents = [
@@ -561,6 +586,16 @@ function CroisementContent() {
           }
         >
           <Flower2 className="size-4" /> Croisements & Récoltes
+        </button>
+        <button
+          onClick={() => setActiveTab("fruits")}
+          className={
+            activeTab === "fruits"
+              ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary"
+              : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
+          }
+        >
+          <Cherry className="size-4" /> Module Fruits
         </button>
         <button
           onClick={() => setActiveTab("pollen")}
@@ -801,8 +836,10 @@ function CroisementContent() {
             </div>
           )}
         </>
-      ) : (
+      ) : activeTab === "pollen" ? (
         <PollenPanel pollenLots={pollenLots} onRefresh={fetchData} />
+      ) : (
+        <FruitsPanel fruits={fruits} crosses={crosses} onRefresh={fetchData} />
       )}
     </div>
   )
@@ -1015,6 +1052,71 @@ function HarvestRow({ harvest, onUpdate, onDelete }: { harvest: HipHarvest; onUp
         </Button>
       </div>
     </div>
+  )
+}
+
+function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; crosses: Cross[]; onRefresh: () => void }) {
+  const [editing, setEditing] = useState<string | null>(null)
+  const [seedCount, setSeedCount] = useState("0")
+  const [checklist, setChecklist] = useState<Record<string, boolean>>({})
+
+  async function saveFruit(fruit: CrossFruit) {
+    const count = Math.max(0, Number.parseInt(seedCount, 10) || 0)
+    const { data: userData } = await supabase.auth.getUser()
+    if (!userData.user) return
+    const { error } = await supabase.from("cross_fruits").update({
+      seed_count: count,
+      checklist,
+      status: count > 0 ? "récolté" : fruit.status,
+    }).eq("id", fruit.id)
+    if (error) {
+      alert(`Erreur : ${error.message}`)
+      return
+    }
+    if (count > 0) {
+      const year = new Date().getFullYear()
+      await supabase.from("harvested_seeds").upsert(
+        Array.from({ length: count }, (_, index) => ({
+          user_id: userData.user.id,
+          fruit_id: fruit.id,
+          seed_name: `${fruit.fruit_name}-${index + 1}-${year}`,
+          seed_number: index + 1,
+          harvest_year: year,
+        })),
+        { onConflict: "fruit_id,seed_number" },
+      )
+    }
+    setEditing(null)
+    onRefresh()
+  }
+
+  return (
+    <Card className="p-4">
+      <SectionHeading title="Suivi des fruits" description="Chaque fleur crée automatiquement un fruit. Les graines reçoivent leur nom complet et leur numéro." />
+      {fruits.length === 0 ? <EmptyState icon={<Cherry className="size-8" />} title="Aucun fruit" description="Les fruits apparaîtront automatiquement après la création d’un croisement." /> : (
+        <div className="mt-4 grid gap-2">
+          {fruits.map((fruit) => {
+            const cross = crosses.find((item) => item.id === fruit.cross_id)
+            const isEditing = editing === fruit.id
+            return <div key={fruit.id} className="flex flex-wrap items-center gap-3 rounded-md border border-border p-3 text-sm">
+              <Cherry className="size-4 text-primary" />
+              <span className="font-medium">{fruit.fruit_name}</span>
+              <span className="text-xs text-muted-foreground">{cross?.seed_parent ?? "?"} × {cross?.pollen_parent ?? "?"}</span>
+              <Badge tone={fruit.status === "récolté" ? "success" : "warning"}>{fruit.status}</Badge>
+              <span className="text-xs text-muted-foreground">{fruit.seed_count} graine(s)</span>
+              <div className="ml-auto flex items-center gap-2">
+                {isEditing ? <>
+                  <Input className="w-24" type="number" min={0} value={seedCount} onChange={(event) => setSeedCount(event.target.value)} aria-label={`Nombre de graines pour ${fruit.fruit_name}`} />
+                  <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={Boolean(checklist.mature)} onChange={(event) => setChecklist({ ...checklist, mature: event.target.checked })} /> mûr</label>
+                  <Button size="sm" onClick={() => saveFruit(fruit)}>Enregistrer</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
+                </> : <Button size="sm" variant="outline" onClick={() => { setEditing(fruit.id); setSeedCount(String(fruit.seed_count)); setChecklist(fruit.checklist ?? {}) }}>Suivre / graines</Button>}
+              </div>
+            </div>
+          })}
+        </div>
+      )}
+    </Card>
   )
 }
 
