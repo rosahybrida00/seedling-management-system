@@ -81,10 +81,32 @@ interface Treatment {
   notes: string | null
 }
 
+interface HarvestedSeed {
+  id: string
+  fruit_id: string
+  seed_name: string
+  seed_number: number
+  harvest_year: number
+  status: string
+  greenhouse_id: string | null
+  greenhouse_table_id: string | null
+}
+
+interface CrossFruit {
+  id: string
+  cross_id: string
+  fruit_name: string
+  flower_index: number
+  status: string
+  seed_count: number
+  checklist: Record<string, boolean>
+}
+
 interface VarietySuggestion {
   id: string
   name: string
   commercial_name: string | null
+  source: "catalogue" | "semis"
 }
 
 const CROSS_STATUS_LABELS: Record<string, string> = {
@@ -156,7 +178,8 @@ function CroisementContent() {
   const [pollenLots, setPollenLots] = useState<PollenLot[]>([])
   const [treatments, setTreatments] = useState<Treatment[]>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<"crosses" | "pollen">("crosses")
+  const [activeTab, setActiveTab] = useState<"crosses" | "pollen" | "fruits">("crosses")
+  const [fruits, setFruits] = useState<CrossFruit[]>([])
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   
@@ -185,6 +208,32 @@ function CroisementContent() {
     fetchData()
   }, [])
 
+  async function searchParents(query: string) {
+    const escapedQuery = query.replace(/[%,()]/g, " ").trim()
+    const [{ data: varieties }, { data: seedlings }] = await Promise.all([
+      supabase
+        .from("varieties")
+        .select("id, name, commercial_name")
+        .or(`name.ilike.%${escapedQuery}%,commercial_name.ilike.%${escapedQuery}%`)
+        .limit(6),
+      supabase
+        .from("seedlings")
+        .select("id, code")
+        .ilike("code", `%${escapedQuery}%`)
+        .limit(6),
+    ])
+
+    return [
+      ...(varieties ?? []).map((item) => ({ ...item, source: "catalogue" as const })),
+      ...(seedlings ?? []).map((item) => ({
+        id: item.id,
+        name: item.code,
+        commercial_name: "Semis",
+        source: "semis" as const,
+      })),
+    ].slice(0, 8)
+  }
+
   useEffect(() => {
     const query = form.seedParent.trim()
     if (query.length < 1) {
@@ -194,16 +243,9 @@ function CroisementContent() {
     }
 
     const timer = setTimeout(async () => {
-      const { data } = await supabase
-        .from("varieties")
-        .select("id, name, commercial_name")
-        .or(`name.ilike.%${query}%,commercial_name.ilike.%${query}%`)
-        .limit(6)
-      
-      if (data) {
-        setSeedSuggestions(data as VarietySuggestion[])
-        setShowSeedSugg(true)
-      }
+      const data = await searchParents(query)
+      setSeedSuggestions(data)
+      setShowSeedSugg(true)
     }, 200)
 
     return () => clearTimeout(timer)
@@ -218,16 +260,9 @@ function CroisementContent() {
     }
 
     const timer = setTimeout(async () => {
-      const { data } = await supabase
-        .from("varieties")
-        .select("id, name, commercial_name")
-        .or(`name.ilike.%${query}%,commercial_name.ilike.%${query}%`)
-        .limit(6)
-      
-      if (data) {
-        setPollenSuggestions(data as VarietySuggestion[])
-        setShowPollenSugg(true)
-      }
+      const data = await searchParents(query)
+      setPollenSuggestions(data)
+      setShowPollenSugg(true)
     }, 200)
 
     return () => clearTimeout(timer)
@@ -246,21 +281,62 @@ function CroisementContent() {
 
   async function fetchData() {
     setLoading(true)
-    const [{ data: cData }, { data: hData }, { data: pData }, { data: tData }] = await Promise.all([
+    const [{ data: cData }, { data: hData }, { data: pData }, { data: tData }, { data: fData }] = await Promise.all([
       supabase.from("crosses").select("*").order("created_at", { ascending: false }),
       supabase.from("hip_harvests").select("*").order("created_at", { ascending: false }),
       supabase.from("pollen_lots").select("*").order("created_at", { ascending: false }),
       supabase.from("treatments").select("*").order("applied_at", { ascending: false }),
+      supabase.from("cross_fruits").select("*").order("created_at", { ascending: false }),
     ])
     if (cData) setCrosses(cData as Cross[])
     if (hData) setHarvests(hData as HipHarvest[])
     if (pData) setPollenLots(pData as PollenLot[])
     if (tData) setTreatments(tData as Treatment[])
+    if (fData) setFruits(fData as CrossFruit[])
     setLoading(false)
+  }
+
+  async function fetchHistoricalWeather(date: string): Promise<Record<string, unknown>> {
+    const fallback: Record<string, unknown> = {}
+    try {
+      const { data: authData } = await supabase.auth.getUser()
+      if (!authData.user) return fallback
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("city, postal_code")
+        .eq("id", authData.user.id)
+        .maybeSingle()
+      const city = profile?.city || profile?.postal_code
+      if (!city) return fallback
+      const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fr&format=json`)
+      const geoData = await geoResponse.json()
+      const geo = geoData?.results?.[0]
+      if (!geo) return fallback
+      const response = await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=${geo.latitude}&longitude=${geo.longitude}&start_date=${date}&end_date=${date}&daily=temperature_2m_mean,relative_humidity_2m_mean,precipitation_sum&timezone=auto`)
+      if (!response.ok) return fallback
+      const data = await response.json()
+      return {
+        ...fallback,
+        historical_date: date,
+        location: geo.name,
+        temperature_mean: data?.daily?.temperature_2m_mean?.[0] ?? null,
+        humidity_mean: data?.daily?.relative_humidity_2m_mean?.[0] ?? null,
+        precipitation_sum: data?.daily?.precipitation_sum?.[0] ?? null,
+        source: "open-meteo-archive",
+      }
+    } catch {
+      return fallback
+    }
   }
 
   async function createCross() {
     if (!form.seedParent.trim() && !form.pollenParent.trim()) return
+
+    const { data: authData } = await supabase.auth.getUser()
+    if (!authData.user) {
+      alert("Vous devez être connecté pour enregistrer un croisement.")
+      return
+    }
 
     const seedVal = form.seedParent.trim() ? form.seedParent.trim() : "Inconnu"
     const pollenVal = form.pollenParent.trim() ? form.pollenParent.trim() : "Inconnu"
@@ -278,12 +354,13 @@ function CroisementContent() {
     const flower = flowerLetter(flowerIdx)
     const fruitCode = generateFruitCode(base, lotIdx, flowerIdx)
 
-    const climateData: Record<string, string> = {}
-    if (form.tempStress) climateData.temperature = form.tempStress
-    if (form.humidity) climateData.humidity = form.humidity
+    const climateData: Record<string, unknown> = await fetchHistoricalWeather(form.pollinationDate)
+    if (form.tempStress) climateData.temperature_observed = form.tempStress
+    if (form.humidity) climateData.humidity_observed = form.humidity
     if (form.stressNotes) climateData.stress_notes = form.stressNotes
 
     const payload: Record<string, any> = {
+      user_id: authData.user.id,
       code: fruitCode,
       seed_parent: seedVal,
       pollen_parent: pollenVal,
@@ -294,19 +371,59 @@ function CroisementContent() {
       flower_letter: flower,
       climate_data: climateData,
       status: "En cours",
-      pollinated_flowers_count: parseInt(form.pollinatedFlowersCount, 10) || 1,
+      flower_count: Number.parseInt(form.pollinatedFlowersCount, 10) || 1,
       pollen_type: form.pollenType,
       pollen_lot_id: form.pollenType === "conservé" ? form.pollenLotId || null : null,
+      // The connected local schema still references the legacy rose_varieties table.
+      // Keep the exact selected parent names until that legacy FK is aligned with varieties.
+      // This prevents valid catalogue selections from failing on insert.
     }
 
-    if (form.seedParentId) payload.seed_parent_id = form.seedParentId
-    if (form.pollenParentId) payload.pollen_parent_id = form.pollenParentId
-
-    const { error } = await supabase.from("crosses").insert(payload)
+    const { data: createdCross, error } = await supabase.from("crosses").insert(payload).select("id").single()
     if (error) {
-      console.error("Erreur lors de la création du croisement :", error)
-      alert(`Erreur : ${error.message}`)
+      const details = [error.message, error.details, error.hint, error.code].filter(Boolean).join(" — ")
+      console.error("[v0] Erreur lors de la création du croisement :", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code,
+        payload,
+      })
+      alert(`Erreur lors de la création du croisement : ${details || "échec de l’insertion"}`)
       return
+    }
+
+    if (createdCross) {
+      const flowerCount = Number.parseInt(form.pollinatedFlowersCount, 10) || 1
+      const fruitsToCreate = Array.from({ length: flowerCount }, (_, index) => ({
+        user_id: authData.user.id,
+        cross_id: createdCross.id,
+        fruit_name: `${base}${lot}-${flowerLetter(index)}`,
+        flower_index: index + 1,
+        climate_data: climateData,
+      }))
+      await supabase.from("cross_fruits").insert(fruitsToCreate)
+    }
+
+    const missingParents = [
+      !form.seedParentId && form.seedParent.trim()
+        ? { name: seedVal, role: "seed" as const, label: "porte-graine" }
+        : null,
+      !form.pollenParentId && form.pollenParent.trim()
+        ? { name: pollenVal, role: "pollen" as const, label: "pollen" }
+        : null,
+    ].filter(Boolean) as Array<{ name: string; role: "seed" | "pollen"; label: string }>
+
+    if (createdCross && missingParents.length > 0) {
+      await supabase.from("parent_alerts").insert(
+        missingParents.map((parent) => ({
+          parent_name: parent.name,
+          parent_role: parent.role,
+          cross_id: createdCross.id,
+          message: `Ajouter le parent ${parent.label} « ${parent.name} » au catalogue.`,
+        })),
+      )
+      alert(`Croisement créé. Parent à ajouter au catalogue : ${missingParents.map((parent) => parent.name).join(", ")}.`)
     }
 
     setForm({
@@ -482,6 +599,16 @@ function CroisementContent() {
           <Flower2 className="size-4" /> Croisements & Récoltes
         </button>
         <button
+          onClick={() => setActiveTab("fruits")}
+          className={
+            activeTab === "fruits"
+              ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary"
+              : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
+          }
+        >
+          <Cherry className="size-4" /> Module Fruits
+        </button>
+        <button
           onClick={() => setActiveTab("pollen")}
           className={
             activeTab === "pollen"
@@ -505,7 +632,7 @@ function CroisementContent() {
             <Card className="p-4">
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div className="relative">
-                  <Field label="Parent porte-graine (♀)" hint="Tapez pour chercher dans le catalogue">
+                  <Field label="Parent porte-graine (♀)" hint="Catalogue et tous vos semis">
                     <Input
                       value={form.seedParent}
                       onChange={(e) => setForm({ ...form, seedParent: e.target.value, seedParentId: "" })}
@@ -528,6 +655,7 @@ function CroisementContent() {
                           {s.commercial_name && s.commercial_name !== s.name ? (
                             <span className="text-muted-foreground"> ({s.commercial_name})</span>
                           ) : null}
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-primary/70">{s.source}</span>
                         </div>
                       ))}
                     </div>
@@ -535,7 +663,7 @@ function CroisementContent() {
                 </div>
 
                 <div className="relative">
-                  <Field label="Parent pollen (♂)" hint="Tapez pour chercher dans le catalogue">
+                  <Field label="Parent pollen (♂)" hint="Catalogue et tous vos semis">
                     <Input
                       value={form.pollenParent}
                       onChange={(e) => setForm({ ...form, pollenParent: e.target.value, pollenParentId: "" })}
@@ -558,6 +686,7 @@ function CroisementContent() {
                           {s.commercial_name && s.commercial_name !== s.name ? (
                             <span className="text-muted-foreground"> ({s.commercial_name})</span>
                           ) : null}
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-primary/70">{s.source}</span>
                         </div>
                       ))}
                     </div>
@@ -718,8 +847,10 @@ function CroisementContent() {
             </div>
           )}
         </>
-      ) : (
+      ) : activeTab === "pollen" ? (
         <PollenPanel pollenLots={pollenLots} onRefresh={fetchData} />
+      ) : (
+        <FruitsPanel fruits={fruits} crosses={crosses} onRefresh={fetchData} />
       )}
     </div>
   )
@@ -932,6 +1063,104 @@ function HarvestRow({ harvest, onUpdate, onDelete }: { harvest: HipHarvest; onUp
         </Button>
       </div>
     </div>
+  )
+}
+
+function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; crosses: Cross[]; onRefresh: () => void }) {
+  const [editing, setEditing] = useState<string | null>(null)
+  const [seedCount, setSeedCount] = useState("0")
+  const [checklist, setChecklist] = useState<Record<string, boolean>>({})
+  const [seeds, setSeeds] = useState<HarvestedSeed[]>([])
+  const [greenhouses, setGreenhouses] = useState<Array<{ id: string; name: string }>>([])
+  const [tables, setTables] = useState<Array<{ id: string; greenhouse_id: string; name: string }>>([])
+  const [greenhouseId, setGreenhouseId] = useState("")
+  const [tableId, setTableId] = useState("")
+
+  useEffect(() => {
+    Promise.all([
+      supabase.from("harvested_seeds").select("*").order("seed_name"),
+      supabase.from("greenhouses").select("id,name").order("name"),
+      supabase.from("greenhouse_tables").select("id,greenhouse_id,name").order("name"),
+    ]).then(([seedResult, greenhouseResult, tableResult]) => {
+      if (seedResult.data) setSeeds(seedResult.data as HarvestedSeed[])
+      if (greenhouseResult.data) setGreenhouses(greenhouseResult.data)
+      if (tableResult.data) setTables(tableResult.data)
+    })
+  }, [fruits.length])
+
+  async function saveFruit(fruit: CrossFruit) {
+    const count = Math.max(0, Number.parseInt(seedCount, 10) || 0)
+    const { data: userData } = await supabase.auth.getUser()
+    if (!userData.user) return
+    const { error } = await supabase.from("cross_fruits").update({
+      seed_count: count,
+      checklist,
+      status: count > 0 ? "récolté" : fruit.status,
+    }).eq("id", fruit.id)
+    if (error) {
+      alert(`Erreur : ${error.message}`)
+      return
+    }
+    if (count > 0) {
+      const year = new Date().getFullYear()
+      const { data: savedSeeds } = await supabase.from("harvested_seeds").upsert(
+        Array.from({ length: count }, (_, index) => ({
+          user_id: userData.user.id,
+          fruit_id: fruit.id,
+          seed_name: `${fruit.fruit_name}-${index + 1}-${year}`,
+          seed_number: index + 1,
+          harvest_year: year,
+        })),
+        { onConflict: "fruit_id,seed_number" },
+      ).select("id")
+      if (greenhouseId && tableId && savedSeeds?.length) {
+        await supabase.from("harvested_seeds").update({
+        greenhouse_id: greenhouseId,
+        greenhouse_table_id: tableId,
+        status: "plantee",
+      }).in("id", savedSeeds.map((seed) => seed.id))
+      }
+    }
+    setEditing(null)
+    onRefresh()
+  }
+
+  return (
+    <Card className="p-4">
+      <SectionHeading title="Suivi des fruits" description="Chaque fleur crée automatiquement un fruit. Les graines reçoivent leur nom complet et leur numéro." />
+      {fruits.length === 0 ? <EmptyState icon={<Cherry className="size-8" />} title="Aucun fruit" description="Les fruits apparaîtront automatiquement après la création d’un croisement." /> : (
+        <div className="mt-4 grid gap-2">
+          {fruits.map((fruit) => {
+            const cross = crosses.find((item) => item.id === fruit.cross_id)
+            const isEditing = editing === fruit.id
+            return <div key={fruit.id} className="flex flex-wrap items-center gap-3 rounded-md border border-border p-3 text-sm">
+              <Cherry className="size-4 text-primary" />
+              <span className="font-medium">{fruit.fruit_name}</span>
+              <span className="text-xs text-muted-foreground">{cross?.seed_parent ?? "?"} × {cross?.pollen_parent ?? "?"}</span>
+              <Badge tone={fruit.status === "récolté" ? "success" : "warning"}>{fruit.status}</Badge>
+              <span className="text-xs text-muted-foreground">{fruit.seed_count} graine(s)</span>
+              {seeds.filter((seed) => seed.fruit_id === fruit.id).length > 0 ? <span className="w-full text-[11px] text-muted-foreground">{seeds.filter((seed) => seed.fruit_id === fruit.id).map((seed) => `${seed.seed_name}${seed.greenhouse_table_id ? " · plantée" : ""}`).join(", ")}</span> : null}
+              <div className="ml-auto flex items-center gap-2">
+                {isEditing ? <>
+                  <Input className="w-24" type="number" min={0} value={seedCount} onChange={(event) => setSeedCount(event.target.value)} aria-label={`Nombre de graines pour ${fruit.fruit_name}`} />
+                  <Select value={greenhouseId} onChange={(event) => { setGreenhouseId(event.target.value); setTableId("") }} aria-label="Serre de plantation">
+                    <option value="">Serre</option>
+                    {greenhouses.map((greenhouse) => <option key={greenhouse.id} value={greenhouse.id}>{greenhouse.name}</option>)}
+                  </Select>
+                  <Select value={tableId} onChange={(event) => setTableId(event.target.value)} aria-label="Table de plantation">
+                    <option value="">Table</option>
+                    {tables.filter((table) => table.greenhouse_id === greenhouseId).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
+                  </Select>
+                  <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={Boolean(checklist.mature)} onChange={(event) => setChecklist({ ...checklist, mature: event.target.checked })} /> mûr</label>
+                  <Button size="sm" onClick={() => saveFruit(fruit)}>Enregistrer</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
+                </> : <Button size="sm" variant="outline" onClick={() => { setEditing(fruit.id); setSeedCount(String(fruit.seed_count)); setChecklist(fruit.checklist ?? {}) }}>Suivre / graines</Button>}
+              </div>
+            </div>
+          })}
+        </div>
+      )}
+    </Card>
   )
 }
 
