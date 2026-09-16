@@ -272,6 +272,39 @@ function CroisementContent() {
     setLoading(false)
   }
 
+  async function fetchHistoricalWeather(date: string): Promise<Record<string, unknown>> {
+    const fallback: Record<string, unknown> = {}
+    try {
+      const { data: authData } = await supabase.auth.getUser()
+      if (!authData.user) return fallback
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("city, postal_code")
+        .eq("id", authData.user.id)
+        .maybeSingle()
+      const city = profile?.city || profile?.postal_code
+      if (!city) return fallback
+      const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fr&format=json`)
+      const geoData = await geoResponse.json()
+      const geo = geoData?.results?.[0]
+      if (!geo) return fallback
+      const response = await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=${geo.latitude}&longitude=${geo.longitude}&start_date=${date}&end_date=${date}&daily=temperature_2m_mean,relative_humidity_2m_mean,precipitation_sum&timezone=auto`)
+      if (!response.ok) return fallback
+      const data = await response.json()
+      return {
+        ...fallback,
+        historical_date: date,
+        location: geo.name,
+        temperature_mean: data?.daily?.temperature_2m_mean?.[0] ?? null,
+        humidity_mean: data?.daily?.relative_humidity_2m_mean?.[0] ?? null,
+        precipitation_sum: data?.daily?.precipitation_sum?.[0] ?? null,
+        source: "open-meteo-archive",
+      }
+    } catch {
+      return fallback
+    }
+  }
+
   async function createCross() {
     if (!form.seedParent.trim() && !form.pollenParent.trim()) return
 
@@ -297,9 +330,9 @@ function CroisementContent() {
     const flower = flowerLetter(flowerIdx)
     const fruitCode = generateFruitCode(base, lotIdx, flowerIdx)
 
-    const climateData: Record<string, string> = {}
-    if (form.tempStress) climateData.temperature = form.tempStress
-    if (form.humidity) climateData.humidity = form.humidity
+    const climateData: Record<string, unknown> = await fetchHistoricalWeather(form.pollinationDate)
+    if (form.tempStress) climateData.temperature_observed = form.tempStress
+    if (form.humidity) climateData.humidity_observed = form.humidity
     if (form.stressNotes) climateData.stress_notes = form.stressNotes
 
     const payload: Record<string, any> = {
