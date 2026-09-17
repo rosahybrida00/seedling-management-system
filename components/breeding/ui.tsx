@@ -1,5 +1,6 @@
 "use client"
 
+import { forwardRef } from "react"
 import { cn } from "@/lib/utils"
 import type {
   InputHTMLAttributes,
@@ -61,12 +62,12 @@ export function Label({
 const controlClasses =
   "h-9 w-full rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30 disabled:cursor-not-allowed disabled:opacity-50"
 
-export function Input({
-  className,
-  ...props
-}: InputHTMLAttributes<HTMLInputElement>) {
-  return <input className={cn(controlClasses, className)} {...props} />
-}
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
+  function Input({ className, ...props }, ref) {
+    return <input ref={ref} className={cn(controlClasses, className)} {...props} />
+  },
+)
+Input.displayName = "Input"
 
 export function Select({
   className,

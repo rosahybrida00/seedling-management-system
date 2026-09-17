@@ -54,6 +54,27 @@ function ProfilContent() {
     fetchProfile()
   }, [])
 
+  useEffect(() => {
+    if (!profile?.city && typeof navigator !== "undefined" && "geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(async ({ coords }) => {
+        try {
+          const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${coords.latitude}&longitude=${coords.longitude}&localityLanguage=fr`)
+          const data = await response.json()
+          const city = data.city || data.locality || data.principalSubdivision || null
+          if (!city) return
+          const postalCode = data.postcode || null
+          setProfile((current) => current ? { ...current, city, postal_code: current.postal_code || postalCode } : current)
+          const { data: userData } = await supabase.auth.getUser()
+          if (userData.user) {
+            await supabase.from("profiles").upsert({ id: userData.user.id, city, postal_code: postalCode }, { onConflict: "id" })
+          }
+        } catch {
+          // WeatherBanner still falls back to browser GPS when reverse geocoding is unavailable.
+        }
+      }, () => undefined, { timeout: 5000 })
+    }
+  }, [profile?.city])
+
   async function fetchProfile() {
     setLoading(true)
     const { data: userData } = await supabase.auth.getUser()
@@ -111,7 +132,19 @@ function ProfilContent() {
     const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true })
     if (upErr) return
     const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path)
-    setProfile({ ...profile!, avatar_url: urlData.publicUrl })
+    const avatarUrl = urlData.publicUrl
+    const nextProfile = profile ?? {
+      obtenteur_name: userData.user.user_metadata?.name ?? userData.user.email?.split("@")[0] ?? null,
+      affixe: null,
+      siret: null,
+      city: null,
+      postal_code: null,
+      address: null,
+      avatar_url: null,
+      subscription: "free",
+    }
+    setProfile({ ...nextProfile, avatar_url: avatarUrl })
+    await supabase.from("profiles").upsert({ id: userData.user.id, avatar_url: avatarUrl }, { onConflict: "id" })
   }
 
   async function handleChangePassword() {

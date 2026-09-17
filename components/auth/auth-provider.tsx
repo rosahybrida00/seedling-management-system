@@ -40,7 +40,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signUp = useCallback(async (email: string, password: string) => {
-    const { error } = await supabase.auth.signUp({ email, password })
+    const { error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: {
+        emailRedirectTo: process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ?? `${window.location.origin}/auth/callback`,
+        data: { name: email.split("@")[0] },
+      },
+    })
     return { error: error?.message ?? null }
   }, [])
 
@@ -49,7 +56,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const resetPassword = useCallback(async (email: string) => {
-    const { error } = await supabase.auth.resetPasswordForEmail(email)
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${window.location.origin}/profil?reset=1`,
+    })
     return { error: error?.message ?? null }
   }, [])
 
