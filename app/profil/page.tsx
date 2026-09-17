@@ -71,7 +71,20 @@ function ProfilContent() {
         } catch {
           // WeatherBanner still falls back to browser GPS when reverse geocoding is unavailable.
         }
-      }, () => undefined, { timeout: 5000 })
+      }, async () => {
+        try {
+          const response = await fetch("https://ipapi.co/json/")
+          const data = await response.json()
+          const city = data.city || null
+          if (!city) return
+          const postalCode = data.postal || null
+          setProfile((current) => current ? { ...current, city, postal_code: current.postal_code || postalCode } : current)
+          const { data: userData } = await supabase.auth.getUser()
+          if (userData.user) await supabase.from("profiles").upsert({ id: userData.user.id, city, postal_code: postalCode }, { onConflict: "id" })
+        } catch {
+          // The profile remains editable when browser and IP location are unavailable.
+        }
+      }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 })
     }
   }, [profile?.city])
 
@@ -93,7 +106,20 @@ function ProfilContent() {
       supabase.from("varieties").select("id", { count: "exact", head: true }).eq("created_by", userData.user.id),
     ])
 
-    if (profileData) setProfile(profileData as Profile)
+    const nextProfile = profileData ?? {
+      obtenteur_name: userData.user.user_metadata?.name ?? userData.user.email?.split("@")[0] ?? null,
+      affixe: null,
+      siret: null,
+      city: null,
+      postal_code: null,
+      address: null,
+      avatar_url: null,
+      subscription: "free",
+    }
+    setProfile(nextProfile as Profile)
+    if (!profileData) {
+      await supabase.from("profiles").upsert({ id: userData.user.id, obtenteur_name: nextProfile.obtenteur_name }, { onConflict: "id" })
+    }
     setStats({
       crosses: crossesCount.count ?? 0,
       seedlings: seedlingsCount.count ?? 0,
@@ -129,10 +155,13 @@ function ProfilContent() {
     if (!userData.user) return
     const ext = file.name.split(".").pop()
     const path = `avatars/${userData.user.id}.${ext}`
-    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true })
-    if (upErr) return
+    const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, cacheControl: "3600", contentType: file.type })
+    if (upErr) {
+      console.error("[v0] Avatar upload failed:", upErr.message)
+      return
+    }
     const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path)
-    const avatarUrl = urlData.publicUrl
+    const avatarUrl = `${urlData.publicUrl}?v=${Date.now()}`
     const nextProfile = profile ?? {
       obtenteur_name: userData.user.user_metadata?.name ?? userData.user.email?.split("@")[0] ?? null,
       affixe: null,

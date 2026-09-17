@@ -21,6 +21,7 @@ export function WeatherBanner() {
         navigator.geolocation.getCurrentPosition(
           async (pos) => {
             const { latitude, longitude } = pos.coords
+            await persistGpsLocation(latitude, longitude)
             await fetchFromOpenMeteo(latitude, longitude, "gps", "Position GPS")
           },
           async () => {
@@ -42,6 +43,22 @@ export function WeatherBanner() {
       })
     } finally {
       setLoading(false)
+    }
+  }
+
+  async function persistGpsLocation(latitude: number, longitude: number) {
+    try {
+      const response = await fetch(`https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=fr`)
+      if (!response.ok) return
+      const data = await response.json()
+      const city = data.city || data.locality || data.principalSubdivision
+      if (!city) return
+      const { data: userData } = await supabase.auth.getUser()
+      if (userData.user) {
+        await supabase.from("profiles").upsert({ id: userData.user.id, city, postal_code: data.postcode || null }, { onConflict: "id" })
+      }
+    } catch {
+      // Weather itself remains available even if reverse geocoding is unavailable.
     }
   }
 
