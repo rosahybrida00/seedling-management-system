@@ -394,14 +394,14 @@ function CroisementContent() {
     const { data: createdCross, error } = await supabase.from("crosses").insert(payload).select("id").single()
     if (error) {
       const details = [error.message, error.details, error.hint, error.code].filter(Boolean).join(" — ")
-      console.error("[v0] Erreur lors de la création du croisement :", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-        payload,
+      const diagnostic = JSON.stringify({
+        message: error.message ?? "",
+        details: error.details ?? "",
+        hint: error.hint ?? "",
+        code: error.code ?? "",
       })
-      alert(`Erreur lors de la création du croisement : ${details || "échec de l’insertion"}`)
+      console.log("[v0] Erreur lors de la création du croisement :", diagnostic)
+      alert(`Erreur lors de la création du croisement : ${details || diagnostic}`)
       return
     }
 

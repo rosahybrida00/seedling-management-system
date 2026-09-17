@@ -157,7 +157,7 @@ function ProfilContent() {
     const path = `avatars/${userData.user.id}.${ext}`
     const { error: upErr } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, cacheControl: "3600", contentType: file.type })
     if (upErr) {
-      console.error("[v0] Avatar upload failed:", upErr.message)
+      alert(`Impossible d’enregistrer la photo : ${upErr.message || "erreur de stockage"}`)
       return
     }
     const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(path)
