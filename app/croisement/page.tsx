@@ -277,14 +277,27 @@ function CroisementContent() {
   }, [form.pollenParent])
 
   useEffect(() => {
-    const todayStr = new Date().toISOString().split("T")[0]
-    if (form.pollinationDate === todayStr) {
-      setForm((prev) => ({
-        ...prev,
-        tempStress: prev.tempStress || "22",
-        humidity: prev.humidity || "65",
-      }))
+    if (form.pollinationDate !== new Date().toISOString().split("T")[0]) return
+    let cancelled = false
+    async function loadTodayWeather() {
+      try {
+        const { data: userData } = await supabase.auth.getUser()
+        if (!userData.user) return
+        const { data: profile } = await supabase.from("profiles").select("city, postal_code").eq("id", userData.user.id).maybeSingle()
+        const place = profile?.city || profile?.postal_code
+        if (!place) return
+        const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(place)}&count=1&language=fr&format=json`)
+        const geo = (await geoResponse.json())?.results?.[0]
+        if (!geo) return
+        const weatherResponse = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${geo.latitude}&longitude=${geo.longitude}&current=temperature_2m,relative_humidity_2m`)
+        const current = (await weatherResponse.json())?.current
+        if (!cancelled && current) setForm((prev) => ({ ...prev, tempStress: String(current.temperature_2m ?? ""), humidity: String(current.relative_humidity_2m ?? "") }))
+      } catch {
+        // Keep the fields editable when the weather service is unavailable.
+      }
     }
+    loadTodayWeather()
+    return () => { cancelled = true }
   }, [form.pollinationDate])
 
   async function fetchData() {
@@ -636,9 +649,21 @@ function CroisementContent() {
       {activeTab === "crosses" ? (
         <>
           <div className="flex justify-end">
-<Button onClick={() => { setLotParentCross(null); setCreating((v) => !v) }} className="gap-1.5">
-              <Plus className="size-4" /> Nouveau croisement
-            </Button>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => { setLotParentCross(null); setCreating((v) => !v) }} className="gap-1.5">
+                  <Plus className="size-4" /> Nouveau croisement
+                </Button>
+                {crosses.length > 0 ? (
+                  <Button variant="outline" onClick={() => {
+                    const latest = crosses[0]
+                    setLotParentCross(latest)
+                    setForm((current) => ({ ...current, seedParent: latest.seed_parent ?? "", pollenParent: latest.pollen_parent ?? "", seedParentId: "", pollenParentId: "", pollinationDate: new Date().toISOString().split("T")[0], pollinatedFlowersCount: "1", remarks: "" }))
+                    setCreating(true)
+                  }} className="gap-1.5">
+                    <Plus className="size-4" /> Ajouter un lot / 2e croisement
+                  </Button>
+                ) : null}
+              </div>
           </div>
 
           {creating ? (
