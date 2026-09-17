@@ -181,6 +181,7 @@ function CroisementContent() {
   const [activeTab, setActiveTab] = useState<"crosses" | "pollen" | "fruits">("crosses")
   const [fruits, setFruits] = useState<CrossFruit[]>([])
   const [creating, setCreating] = useState(false)
+  const [lotParentCross, setLotParentCross] = useState<Cross | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
   
   const [form, setForm] = useState({
@@ -203,6 +204,13 @@ function CroisementContent() {
   const [pollenSuggestions, setPollenSuggestions] = useState<VarietySuggestion[]>([])
   const [showSeedSugg, setShowSeedSugg] = useState(false)
   const [showPollenSugg, setShowPollenSugg] = useState(false)
+  const [fruitNames, setFruitNames] = useState<string[]>([])
+
+  useEffect(() => {
+    const count = Math.max(1, Number.parseInt(form.pollinatedFlowersCount, 10) || 1)
+    const base = generateBaseSyllable(form.seedParent.trim() || "Inconnu", form.pollenParent.trim() || "Inconnu")
+    setFruitNames(Array.from({ length: count }, (_, index) => `${base}-A-${flowerLetter(index)}`))
+  }, [form.pollinatedFlowersCount, form.seedParent, form.pollenParent])
 
   useEffect(() => {
     fetchData()
@@ -398,7 +406,7 @@ function CroisementContent() {
       const fruitsToCreate = Array.from({ length: flowerCount }, (_, index) => ({
         user_id: authData.user.id,
         cross_id: createdCross.id,
-        fruit_name: `${base}${lot}-${flowerLetter(index)}`,
+        fruit_name: fruitNames[index] || `${base}-${lot}-${flowerLetter(index)}`,
         flower_index: index + 1,
         climate_data: climateData,
       }))
@@ -442,6 +450,7 @@ function CroisementContent() {
       pollenLotId: "",
     })
     setCreating(false)
+    setLotParentCross(null)
     fetchData()
   }
 
@@ -623,7 +632,7 @@ function CroisementContent() {
       {activeTab === "crosses" ? (
         <>
           <div className="flex justify-end">
-            <Button onClick={() => setCreating((v) => !v)} className="gap-1.5">
+<Button onClick={() => { setLotParentCross(null); setCreating((v) => !v) }} className="gap-1.5">
               <Plus className="size-4" /> Nouveau croisement
             </Button>
           </div>
@@ -635,6 +644,7 @@ function CroisementContent() {
                   <Field label="Parent porte-graine (♀)" hint="Catalogue et tous vos semis">
                     <Input
                       value={form.seedParent}
+                      disabled={Boolean(lotParentCross)}
                       onChange={(e) => setForm({ ...form, seedParent: e.target.value, seedParentId: "" })}
                       onFocus={() => { if (seedSuggestions.length > 0) setShowSeedSugg(true) }}
                       placeholder="Ex: Grande Amore..."
@@ -666,6 +676,7 @@ function CroisementContent() {
                   <Field label="Parent pollen (♂)" hint="Catalogue et tous vos semis">
                     <Input
                       value={form.pollenParent}
+                      disabled={Boolean(lotParentCross)}
                       onChange={(e) => setForm({ ...form, pollenParent: e.target.value, pollenParentId: "" })}
                       onFocus={() => { if (pollenSuggestions.length > 0) setShowPollenSugg(true) }}
                       placeholder="Ex: Black Baccara..."
@@ -697,9 +708,15 @@ function CroisementContent() {
                   <Input type="date" value={form.pollinationDate} onChange={(e) => setForm({ ...form, pollinationDate: e.target.value })} />
                 </Field>
 
-                <Field label="Nombre de fleurs pollinisées" hint="Quantité de fleurs de ce lot">
-                  <Input type="number" min={1} value={form.pollinatedFlowersCount} onChange={(e) => setForm({ ...form, pollinatedFlowersCount: e.target.value })} />
-                </Field>
+  <Field label="Nombre de fleurs pollinisées" hint="Quantité de fleurs de ce lot">
+  <Input type="number" min={1} value={form.pollinatedFlowersCount} onChange={(e) => setForm({ ...form, pollinatedFlowersCount: e.target.value })} />
+  </Field>
+  <div className="sm:col-span-2 lg:col-span-3 rounded-md border border-border p-3">
+    <p className="mb-2 text-xs font-medium">Lot de fruits généré automatiquement</p>
+    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+      {fruitNames.map((name, index) => <Input key={`${name}-${index}`} value={name} onChange={(e) => setFruitNames((current) => current.map((item, itemIndex) => itemIndex === index ? e.target.value : item))} aria-label={`Nom du fruit ${index + 1}`} />)}
+    </div>
+  </div>
 
                 <Field label="Type de pollen" hint="Sélectionnez l'origine du pollen">
                   <Select value={form.pollenType} onChange={(e) => setForm({ ...form, pollenType: e.target.value })}>
@@ -793,6 +810,22 @@ function CroisementContent() {
                           </Button>
                           <Button variant="outline" size="sm" onClick={() => createHarvest(c.id)} className="gap-1">
                             <Cherry className="size-3.5" /> Récolte
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={() => {
+                            setLotParentCross(c)
+                            setForm((current) => ({
+                              ...current,
+                              seedParent: c.seed_parent ?? "",
+                              pollenParent: c.pollen_parent ?? "",
+                              seedParentId: "",
+                              pollenParentId: "",
+                              pollinationDate: new Date().toISOString().split("T")[0],
+                              pollinatedFlowersCount: "1",
+                              remarks: "",
+                            }))
+                            setCreating(true)
+                          }} className="gap-1">
+                            <Plus className="size-3.5" /> Ajouter un lot
                           </Button>
                           <Button variant="destructive" size="sm" onClick={() => deleteCross(c.id)} className="gap-1">
                             <Trash2 className="size-3.5" />
