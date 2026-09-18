@@ -121,7 +121,7 @@ export function BatchesPanel() {
 }
 
 function BatchCard({ batch }: { batch: SowingBatch }) {
-  const { seedlings, greenhouseTables, greenhouses, seedling, greenhouse, run } = useData()
+  const { seedlings, greenhouseTables, greenhouses, crosses, hipHarvests, cross, seedling, greenhouse, run, sowingBatches } = useData()
   const [open, setOpen] = useState(false)
 
   const mySeedlings = seedlings
@@ -196,6 +196,26 @@ function BatchCard({ batch }: { batch: SowingBatch }) {
               onClick={() => run(() => seedling.addSeedling(batch.id))}
             >
               <Plus className="size-3.5" /> Ajouter un semis
+            </Button>
+            <Button
+              size="sm"
+              className="gap-1 self-end"
+              onClick={() => {
+                const sourceHarvest = hipHarvests.find((h) => h.id === batch.hipHarvestId)
+                const sourceCross = sourceHarvest ? crosses.find((c) => c.id === sourceHarvest.crossId) : undefined
+                if (!sourceHarvest || !sourceCross) return
+                const created = cross.createFollowUpCross(
+                  sourceCross,
+                  sowingBatches.length,
+                  batch.seedCount,
+                )
+                seedling.createFollowUpBatch({
+                  hipHarvest: { ...created.harvest, seedCount: batch.seedCount },
+                  code: created.batchCode,
+                })
+              }}
+            >
+              <Plus className="size-3.5" /> Ajouter un lot
             </Button>
           </div>
 

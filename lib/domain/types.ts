@@ -43,6 +43,10 @@ export interface Entity {
  */
 export interface Cross extends Entity {
   code: string
+  /** Nomenclature automatique de la lignée et du lot. */
+  baseSyllable?: string
+  lotLetter?: string
+  flowerLetter?: string
   /** Parent femelle (porte-graine). */
   seedParent: string
   /** Parent mâle (pollen). */

@@ -10,6 +10,7 @@
 
 import type { Cross, HipHarvest } from "@/lib/domain/types"
 import { newId, nowIso, normalizeCode } from "@/lib/domain/ids"
+import { generateBaseSyllable, generateCatalogueCode, lotLetter } from "@/lib/domain/nomenclature"
 import { store as defaultStore, type JsonStore } from "@/lib/store/jsonStore"
 import { mutate, upsertByIdOrStableKey } from "@/lib/store/repository"
 
@@ -63,6 +64,32 @@ export class CrossService {
       upsertByIdOrStableKey(items, cross, (c) => normalizeCode(c.code)),
     )
     return cross
+  }
+
+  /** Duplique le croisement avec les mêmes variétés pour le lot suivant. */
+  createFollowUpCross(source: Cross, existingBatches: number, seedCount: number): { cross: Cross; harvest: HipHarvest; batchCode: string } {
+    const baseSyllable = source.baseSyllable || generateBaseSyllable(source.seedParent, source.pollenParent)
+    const nextLotIndex = Math.max(1, existingBatches)
+    const lot = lotLetter(nextLotIndex)
+    const flower = "a"
+    const cross = this.createCross({
+      code: `${baseSyllable}-${lot}`,
+      seedParent: source.seedParent,
+      pollenParent: source.pollenParent,
+      pollinationDate: new Date().toISOString(),
+      remarks: `Second croisement issu de ${source.code}. Même variétés parentales.`,
+    })
+    const harvest = this.createHarvest({
+      crossId: cross.id,
+      code: `${baseSyllable}-${lot}-${flower}`,
+      seedCount,
+      remarks: "Récolte créée automatiquement pour le nouveau lot.",
+    })
+    return {
+      cross,
+      harvest,
+      batchCode: generateCatalogueCode(baseSyllable, nextLotIndex, 0, seedCount),
+    }
   }
 
   /**

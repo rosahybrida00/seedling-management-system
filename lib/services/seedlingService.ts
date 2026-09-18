@@ -32,6 +32,8 @@ export function buildSeedlingCode(fruitCode: string, index: number): string {
 export interface SowInput {
   /** Récolte source (fruit "Aa"). */
   hipHarvest: HipHarvest
+  /** Code de lot optionnel pour une génération nomenclaturée. */
+  batchCode?: string
   /** Date de semis (ISO). Par défaut : maintenant. */
   sowingDate?: string
   /** Emplacement optionnel (table de serre). */
@@ -58,6 +60,20 @@ export class SeedlingService {
     return this.store.getAll("sowingBatches").find((b) => b.id === id)
   }
 
+  /** Crée un nouveau lot à partir du même fruit, avec un code explicite. */
+  createFollowUpBatch(input: { hipHarvest: HipHarvest; code: string; sowingDate?: string }): {
+    batch: SowingBatch
+    seedlings: Seedling[]
+  } {
+    return this.sow({
+      hipHarvest: input.hipHarvest,
+      batchCode: input.code,
+      sowingDate: input.sowingDate,
+      remarks: "Lot issu d'un second croisement avec les mêmes variétés.",
+      generateSeedlings: input.hipHarvest.seedCount,
+    })
+  }
+
   /**
    * SEMIS : crée réellement un SowingBatch à partir d'une récolte, en copiant
    * `harvestDate` et `seedCount`. Génère optionnellement les semis Aa1..AaN.
@@ -69,7 +85,7 @@ export class SeedlingService {
     const batch: SowingBatch = {
       id: newId(),
       hipHarvestId: hipHarvest.id,
-      code: hipHarvest.code, // code du fruit, ex. "Aa"
+      code: input.batchCode?.trim() || hipHarvest.code, // code du fruit ou du nouveau lot
       sowingDate: input.sowingDate ?? ts,
       // Copies explicites depuis la récolte source :
       harvestDate: hipHarvest.harvestDate,
