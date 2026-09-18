@@ -6,16 +6,23 @@ const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
   process.env.SUPABASE_ANON_KEY
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    "Variables d'environnement Supabase manquantes. Vérifiez NEXT_PUBLIC_SUPABASE_URL et NEXT_PUBLIC_SUPABASE_ANON_KEY.",
-  )
-}
+const isSupabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey)
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
+// Keep the module importable during local setup and preview boot. The fallback
+// client is deliberately non-persistent and never points at a real project.
+const inactiveUrl = "https://inactive-supabase.invalid"
+const inactiveKey = "inactive-supabase-key"
+
+export const supabase = createClient(
+  supabaseUrl ?? inactiveUrl,
+  supabaseAnonKey ?? inactiveKey,
+  {
+    auth: {
+      persistSession: isSupabaseConfigured,
+      autoRefreshToken: isSupabaseConfigured,
+      detectSessionInUrl: isSupabaseConfigured,
+    },
   },
-})
+)
+
+export { isSupabaseConfigured }
