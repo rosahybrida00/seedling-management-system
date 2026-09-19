@@ -13,6 +13,7 @@
 // réattribue jamais d'identifiant.
 // ---------------------------------------------------------------------------
 
+import { supabase } from "@/lib/supabase-client"
 import type {
   Cross,
   Greenhouse,
@@ -78,10 +79,31 @@ class MemoryAdapter implements StorageAdapter {
 }
 
 function defaultAdapter(): StorageAdapter {
-  if (typeof window !== "undefined" && "localStorage" in window) {
-    return new LocalStorageAdapter()
-  }
   return new MemoryAdapter()
+}
+
+const columnMap: Record<string, string> = {
+  createdAt: "created_at", updatedAt: "updated_at", crossId: "cross_id", harvestDate: "harvest_date",
+  seedCount: "seed_count", hipHarvestId: "hip_harvest_id", sowingDate: "sowing_date", tableId: "table_id",
+  greenhouseId: "greenhouse_id", seedling_code: "seedling_code", evaluation_status: "evaluation_status",
+  free_notes: "free_notes", is_promoted_to_variety: "is_promoted_to_variety", index: "seedling_index",
+}
+
+function toSupabaseRow(name: CollectionName, item: Record<string, unknown>): Record<string, unknown> {
+  const row: Record<string, unknown> = { ...item }
+  for (const [from, to] of Object.entries(columnMap)) {
+    if (from in row) { row[to] = row[from]; delete row[from] }
+  }
+  if (name === "seedlings" && !row.status) row.status = "observing"
+  return row
+}
+
+function fromSupabaseRow(row: Record<string, unknown>): Record<string, unknown> {
+  const item: Record<string, unknown> = { ...row }
+  for (const [from, to] of Object.entries(columnMap)) {
+    if (to in item) { item[from] = item[to]; delete item[to] }
+  }
+  return item
 }
 
 /**
@@ -137,6 +159,37 @@ export class JsonStore {
   setAll<K extends CollectionName>(name: K, items: Database[K]): void {
     this.db[name] = items
     this.save()
+    void this.persistCollection(name, items)
+  }
+
+  async hydrateFromSupabase(): Promise<void> {
+    const tables: Record<CollectionName, string> = {
+      crosses: "crosses",
+      hipHarvests: "hip_harvests",
+      sowingBatches: "sowing_batches",
+      seedlings: "seedlings",
+      greenhouses: "greenhouses",
+      greenhouseTables: "greenhouse_tables",
+    }
+    const results = await Promise.all(
+      (Object.entries(tables) as [CollectionName, string][]).map(async ([name, table]) => {
+        const { data, error } = await supabase.from(table).select("*").order("created_at")
+        if (error) throw error
+        return [name, data ?? []] as const
+      }),
+    )
+    for (const [name, rows] of results) this.db[name] = rows.map(fromSupabaseRow) as Database[typeof name]
+  }
+
+  private async persistCollection<K extends CollectionName>(name: K, items: Database[K]): Promise<void> {
+    const tables: Record<CollectionName, string> = {
+      crosses: "crosses", hipHarvests: "hip_harvests", sowingBatches: "sowing_batches",
+      seedlings: "seedlings", greenhouses: "greenhouses", greenhouseTables: "greenhouse_tables",
+    }
+    const table = tables[name]
+    const rows = (items as Array<Record<string, unknown>>).map((item) => toSupabaseRow(name, item))
+    const { error } = await supabase.from(table).upsert(rows, { onConflict: name === "crosses" || name === "greenhouses" || name === "greenhouseTables" ? "id" : "id" })
+    if (error) console.error("[v0] Supabase persistence error", { table, error: error.message })
   }
 
   /** Retourne le document complet (copie défensive). */

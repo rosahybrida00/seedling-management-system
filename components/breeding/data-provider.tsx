@@ -1,6 +1,6 @@
 "use client"
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react"
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react"
 import { crossService } from "@/lib/services/crossService"
 import { seedlingService } from "@/lib/services/seedlingService"
 import { greenhouseService } from "@/lib/services/greenhouseService"
@@ -48,6 +48,16 @@ function readSnapshot(): Snapshot {
 
 export function DataProvider({ children }: { children: React.ReactNode }) {
   const [snapshot, setSnapshot] = useState<Snapshot>(readSnapshot)
+
+  useEffect(() => {
+    let active = true
+    void store.hydrateFromSupabase().then(() => {
+      if (active) setSnapshot(readSnapshot())
+    }).catch((error) => {
+      console.error("[v0] Supabase hydration failed", error)
+    })
+    return () => { active = false }
+  }, [])
 
   const refresh = useCallback(() => setSnapshot(readSnapshot()), [])
 
