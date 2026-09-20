@@ -209,7 +209,7 @@ function CroisementContent() {
   useEffect(() => {
     const count = Math.max(1, Number.parseInt(form.pollinatedFlowersCount, 10) || 1)
     const base = generateBaseSyllable(form.seedParent.trim() || "Inconnu", form.pollenParent.trim() || "Inconnu")
-    setFruitNames(Array.from({ length: count }, (_, index) => `${base}-A-${flowerLetter(index)}`))
+    setFruitNames(Array.from({ length: count }, (_, index) => `${base}-A-${flowerLetter(index)}-`))
   }, [form.pollinatedFlowersCount, form.seedParent, form.pollenParent])
 
   useEffect(() => {
@@ -410,7 +410,10 @@ function CroisementContent() {
       const fruitsToCreate = Array.from({ length: flowerCount }, (_, index) => ({
         user_id: authData.user.id,
         cross_id: createdCross.id,
-        fruit_name: fruitNames[index] || `${base}-${lot}-${flowerLetter(index)}`,
+        fruit_name:
+          lot === "A" && fruitNames[index]
+            ? fruitNames[index]
+            : `${base}-${lot}-${flowerLetter(index)}-`,
         flower_index: index + 1,
         climate_data: climateData,
       }))

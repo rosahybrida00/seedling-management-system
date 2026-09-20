@@ -81,7 +81,7 @@ export function generateFruitCode(
   lotIndex: number,
   flowerIndex: number,
 ): string {
-  return `${baseSyllable}${lotLetter(lotIndex)}${flowerLetter(flowerIndex)}`
+  return `${baseSyllable}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}-`
 }
 
 export function generateSeedlingCode(
@@ -90,7 +90,7 @@ export function generateSeedlingCode(
   flowerIndex: number,
   seedlingIndex: number,
 ): string {
-  return `${baseSyllable}${lotLetter(lotIndex)}${flowerLetter(flowerIndex)}${seedlingIndex}`
+  return `${baseSyllable}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}-${seedlingIndex}`
 }
 
 export function generateCatalogueCode(
