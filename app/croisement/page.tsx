@@ -1202,7 +1202,8 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
               ) : null}
               <div className="ml-auto flex items-center gap-2">
                 {isEditing ? <>
-                  <Input className="w-24" type="number" min={0} value={seedCount} onChange={(event) => setSeedCount(event.target.value)} aria-label={`Nombre de graines pour ${fruit.fruit_name}`} />
+                  <label className="sr-only" htmlFor={`seed-count-${fruit.id}`}>Nombre de graines récoltées pour {fruit.fruit_name}</label>
+                  <Input id={`seed-count-${fruit.id}`} className="w-24" type="number" min={0} value={seedCount} onChange={(event) => setSeedCount(event.target.value)} aria-label={`Nombre de graines pour ${fruit.fruit_name}`} />
                   <Select value={greenhouseId} onChange={(event) => { setGreenhouseId(event.target.value); setTableId("") }} aria-label="Serre de plantation">
                     <option value="">Serre</option>
                     {greenhouses.map((greenhouse) => <option key={greenhouse.id} value={greenhouse.id}>{greenhouse.name}</option>)}
@@ -1214,7 +1215,9 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
                   <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={Boolean(checklist.mature)} onChange={(event) => setChecklist({ ...checklist, mature: event.target.checked })} /> mûr</label>
                   <Button size="sm" onClick={() => saveFruit(fruit)}>Enregistrer</Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
-                </> : <Button size="sm" variant="outline" onClick={() => { setEditing(fruit.id); setSeedCount(String(fruit.seed_count)); setChecklist(fruit.checklist ?? {}) }}>Suivre / graines</Button>}
+                </> : <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setEditing(fruit.id); setSeedCount(String(fruit.seed_count)); setChecklist(fruit.checklist ?? {}) }}>
+                    <Cherry className="size-3.5" /> Enregistrer la récolte
+                  </Button>}
               </div>
             </div>
           })}
