@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState, useCallback } from "react"
 import type { Session, User } from "@supabase/supabase-js"
-import { supabase } from "@/lib/supabase-client"
+import { supabase, supabaseConfigured } from "@/lib/supabase-client"
 
 interface AuthContextValue {
   session: Session | null
@@ -21,6 +21,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!supabaseConfigured) {
+      setLoading(false)
+      return
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       setSession(data.session)
       setLoading(false)
@@ -35,11 +40,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signIn = useCallback(async (email: string, password: string) => {
+    if (!supabaseConfigured) return { error: "Supabase n'est pas configuré." }
     const { error } = await supabase.auth.signInWithPassword({ email, password })
     return { error: error?.message ?? null }
   }, [])
 
   const signUp = useCallback(async (email: string, password: string) => {
+    if (!supabaseConfigured) return { error: "Supabase n'est pas configuré." }
     const { error } = await supabase.auth.signUp({
       email,
       password,
@@ -52,10 +59,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [])
 
   const signOut = useCallback(async () => {
+    if (!supabaseConfigured) return
     await supabase.auth.signOut()
   }, [])
 
   const resetPassword = useCallback(async (email: string) => {
+    if (!supabaseConfigured) return { error: "Supabase n'est pas configuré." }
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
       redirectTo: `${window.location.origin}/profil?reset=1`,
     })
