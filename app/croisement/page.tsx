@@ -1141,18 +1141,29 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
       alert(`Erreur : ${error.message}`)
       return
     }
+    const harvestYear = new Date().getFullYear()
+    await supabase
+      .from("harvested_seeds")
+      .delete()
+      .eq("fruit_id", fruit.id)
+      .gt("seed_number", count)
+
     if (count > 0) {
-      const year = new Date().getFullYear()
-      const { data: savedSeeds } = await supabase.from("harvested_seeds").upsert(
+      const { data: savedSeeds, error: seedError } = await supabase.from("harvested_seeds").upsert(
         Array.from({ length: count }, (_, index) => ({
           user_id: userData.user.id,
           fruit_id: fruit.id,
-          seed_name: `${fruit.fruit_name}-${index + 1}-${year}`,
+          seed_name: `${fruit.fruit_name.replace(/-?$/, "-")}${index + 1}`,
           seed_number: index + 1,
-          harvest_year: year,
+          harvest_year: harvestYear,
+          status: "à semer",
         })),
         { onConflict: "fruit_id,seed_number" },
       ).select("id")
+      if (seedError) {
+        alert(`Erreur lors de la création des graines : ${seedError.message}`)
+        return
+      }
       if (greenhouseId && tableId && savedSeeds?.length) {
         await supabase.from("harvested_seeds").update({
         greenhouse_id: greenhouseId,
@@ -1167,7 +1178,7 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
 
   return (
     <Card className="p-4">
-      <SectionHeading title="Suivi des fruits" description="Chaque fleur crée automatiquement un fruit. Les graines reçoivent leur nom complet et leur numéro." />
+      <SectionHeading title="Suivi des fruits" description="Enregistrez la récolte de chaque fruit pour générer automatiquement les graines à semer." />
       {fruits.length === 0 ? <EmptyState icon={<Cherry className="size-8" />} title="Aucun fruit" description="Les fruits apparaîtront automatiquement après la création d’un croisement." /> : (
         <div className="mt-4 grid gap-2">
           {fruits.map((fruit) => {
@@ -1178,8 +1189,17 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
               <span className="font-medium">{fruit.fruit_name}</span>
               <span className="text-xs text-muted-foreground">{cross?.seed_parent ?? "?"} × {cross?.pollen_parent ?? "?"}</span>
               <Badge tone={fruit.status === "récolté" ? "success" : "warning"}>{fruit.status}</Badge>
-              <span className="text-xs text-muted-foreground">{fruit.seed_count} graine(s)</span>
-              {seeds.filter((seed) => seed.fruit_id === fruit.id).length > 0 ? <span className="w-full text-[11px] text-muted-foreground">{seeds.filter((seed) => seed.fruit_id === fruit.id).map((seed) => `${seed.seed_name}${seed.greenhouse_table_id ? " · plantée" : ""}`).join(", ")}</span> : null}
+              <span className="text-xs text-muted-foreground">{fruit.seed_count} graine(s) générée(s)</span>
+              {seeds.filter((seed) => seed.fruit_id === fruit.id).length > 0 ? (
+                <div className="w-full rounded-md bg-muted/40 px-2.5 py-2 text-[11px] text-muted-foreground">
+                  {seeds.filter((seed) => seed.fruit_id === fruit.id).map((seed) => (
+                    <span key={seed.id} className="mr-2 inline-flex items-center gap-1">
+                      <span className="font-medium text-foreground">{seed.seed_name}</span>
+                      {seed.greenhouse_table_id ? " · semée" : " · à semer"}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <div className="ml-auto flex items-center gap-2">
                 {isEditing ? <>
                   <Input className="w-24" type="number" min={0} value={seedCount} onChange={(event) => setSeedCount(event.target.value)} aria-label={`Nombre de graines pour ${fruit.fruit_name}`} />
