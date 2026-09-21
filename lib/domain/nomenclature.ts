@@ -80,8 +80,9 @@ export function generateFruitCode(
   baseSyllable: string,
   lotIndex: number,
   flowerIndex: number,
+  year = new Date().getFullYear(),
 ): string {
-  return `${baseSyllable}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}-`
+  return `${baseSyllable}-${year}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}`
 }
 
 export function generateSeedlingCode(
@@ -90,7 +91,7 @@ export function generateSeedlingCode(
   flowerIndex: number,
   seedlingIndex: number,
 ): string {
-  return `${baseSyllable}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}-${seedlingIndex}`
+  return `${baseSyllable}-${new Date().getFullYear()}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}-${seedlingIndex}`
 }
 
 export function generateCatalogueCode(
