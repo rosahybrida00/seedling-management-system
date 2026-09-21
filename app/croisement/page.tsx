@@ -357,10 +357,7 @@ function CroisementContent() {
       .eq("base_syllable", base)
 
     const lotIdx = count ?? 0
-    const flowerIdx = 0
     const lot = lotLetter(lotIdx)
-    const flower = flowerLetter(flowerIdx)
-    const fruitCode = generateFruitCode(base, lotIdx, flowerIdx)
 
     const climateData: Record<string, unknown> = await fetchHistoricalWeather(form.pollinationDate)
     if (form.tempStress) climateData.temperature_observed = form.tempStress
@@ -369,7 +366,7 @@ function CroisementContent() {
 
     const payload: Record<string, any> = {
       user_id: authData.user.id,
-      code: fruitCode,
+      code: base,
       seed_parent: seedVal,
       pollen_parent: pollenVal,
       pollination_date: fromDateInput(form.pollinationDate),
@@ -413,7 +410,7 @@ function CroisementContent() {
         fruit_name:
           lot === "A" && fruitNames[index]
             ? fruitNames[index]
-            : `${base}-${lot}-${flowerLetter(index)}-`,
+            : `${base}-${lot}-${flowerLetter(index)}`,
         flower_index: index + 1,
         climate_data: climateData,
       }))
@@ -607,12 +604,6 @@ function CroisementContent() {
         description="Suivi des pollinisations, nouaison, fruits, lots de pollen, traitements phytosanitaires et imputabilité."
       />
 
-      <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
-        <span className="font-medium text-primary">Cascade de traçabilité :</span>{" "}
-        chaque couple possède sa racine, ses lots (A, B, C…), puis ses fruits (a, b, c…).
-        Les semis ne sont créés qu&apos;après une récolte validée avec des graines comptées.
-      </div>
-
       <div className="flex gap-2">
         <button
           onClick={() => setActiveTab("crosses")}
@@ -622,7 +613,7 @@ function CroisementContent() {
               : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
           }
         >
-          <Flower2 className="size-4" /> Croisements & Récoltes
+          <Flower2 className="size-4" /> Croisements
         </button>
         <button
           onClick={() => setActiveTab("fruits")}
@@ -796,7 +787,6 @@ function CroisementContent() {
           ) : (
             <div className="grid gap-3">
               {crosses.map((c) => {
-                const cHarvests = harvests.filter((h) => h.cross_id === c.id)
                 const cTreatments = treatmentsByCross.get(c.id) ?? []
                 return (
                   <Card key={c.id} className="p-4">
@@ -806,7 +796,7 @@ function CroisementContent() {
                       <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
                         <div className="flex items-center gap-3">
                           <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 font-serif text-lg text-primary">
-                            {c.code}
+                            {c.base_syllable || generateBaseSyllable(c.seed_parent, c.pollen_parent)}
                           </span>
                           <div>
                             <p className="text-sm font-medium text-foreground">
@@ -820,13 +810,9 @@ function CroisementContent() {
                         <div className="ml-auto flex items-center gap-3">
                           {c.base_syllable ? <Badge tone="accent">Racine: {c.base_syllable}</Badge> : null}
                           {c.status ? <Badge tone={CROSS_STATUS_TONES[c.status] ?? "neutral"}>{CROSS_STATUS_LABELS[c.status] ?? c.status}</Badge> : null}
-                          <Badge tone="primary">{cHarvests.length} récolte(s)</Badge>
                           {cTreatments.length > 0 ? <Badge tone="neutral"><Shield className="size-3" /> {cTreatments.length} trait.</Badge> : null}
                           <Button variant="ghost" size="sm" onClick={() => setEditingId(c.id)} className="gap-1">
                             <Pencil className="size-3.5" /> Éditer
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => createHarvest(c.id)} className="gap-1">
-                            <Cherry className="size-3.5" /> Récolte
                           </Button>
                           <Button variant="outline" size="sm" onClick={() => {
                             setLotParentCross(c)
@@ -882,15 +868,6 @@ function CroisementContent() {
                       </div>
                     ) : null}
 
-                    {cHarvests.length > 0 ? (
-                      <div className="mt-3 border-t border-border pt-3">
-                        <div className="grid gap-3">
-                          {cHarvests.map((h) => (
-                            <HarvestRow key={h.id} harvest={h} onUpdate={(changes) => updateHarvest(h, changes)} onDelete={() => deleteHarvest(h.id)} />
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
                   </Card>
                 )
               })}
@@ -949,7 +926,7 @@ function CrossEditRow({ cross, onSave, onCancel }: { cross: Cross; onSave: (chan
             <Input value={abortCause} onChange={(e) => setAbortCause(e.target.value)} placeholder="Ex: Coulure, gel..." />
           </Field>
         ) : null}
-        {status === "Récolté" ? (
+        {status === "R��colté" ? (
           <>
             <Field label="Graines totales">
               <Input type="number" value={totalSeeds} onChange={(e) => setTotalSeeds(e.target.value)} />
