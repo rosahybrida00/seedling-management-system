@@ -1,215 +1,44 @@
 "use client"
 
 import { useState } from "react"
-import { Plus, Flower2, Pencil, Check, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Flower2, Plus, Sprout } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useData } from "./data-provider"
-import { Badge, Card, Field, Input, SectionHeading, EmptyState } from "./ui"
-import { formatDate, fromDateInput, toDateInput } from "./format"
-import type { Cross } from "@/lib/domain/types"
+import { Badge, Card, EmptyState, Field, Input, SectionHeading } from "./ui"
+import type { Cross, CrossLot } from "@/lib/domain/types"
 
 export function CrossesPanel() {
-  const { crosses, hipHarvests, cross, run } = useData()
+  const { crosses, cross, run } = useData()
   const [creating, setCreating] = useState(false)
-  const [editingId, setEditingId] = useState<string | null>(null)
-
-  const [form, setForm] = useState({
-    code: "",
-    seedParent: "",
-    pollenParent: "",
-    pollinationDate: "",
-    remarks: "",
-  })
-
-  function resetForm() {
-    setForm({ code: "", seedParent: "", pollenParent: "", pollinationDate: "", remarks: "" })
-  }
+  const [open, setOpen] = useState<string | null>(null)
+  const [form, setForm] = useState({ seedParent: "", pollenParent: "" })
 
   function createCross() {
-    if (!form.code.trim()) return
-    run(() =>
-      cross.createCross({
-        code: form.code,
-        seedParent: form.seedParent,
-        pollenParent: form.pollenParent,
-        pollinationDate: fromDateInput(form.pollinationDate),
-        remarks: form.remarks,
-      }),
-    )
-    resetForm()
+    if (!form.seedParent.trim() || !form.pollenParent.trim()) return
+    const root = `${form.seedParent.trim()} × ${form.pollenParent.trim()}`
+    run(() => cross.createCross({ code: root, root, seedParent: form.seedParent, pollenParent: form.pollenParent }))
+    setForm({ seedParent: "", pollenParent: "" })
     setCreating(false)
   }
 
-  return (
-    <div className="flex flex-col gap-5">
-      <SectionHeading
-        title="Croisements"
-        description="Chaque croisement « A » enregistre les deux parents et la date de pollinisation."
-        action={
-          <Button onClick={() => setCreating((v) => !v)} className="gap-1.5">
-            <Plus className="size-4" /> Nouveau croisement
-          </Button>
-        }
-      />
-
-      {creating ? (
-        <Card className="p-4">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Code" htmlFor="c-code" hint="Clé stable, ex. « A ».">
-              <Input
-                id="c-code"
-                value={form.code}
-                onChange={(e) => setForm({ ...form, code: e.target.value })}
-                placeholder="A"
-              />
-            </Field>
-            <Field label="Parent porte-graine (♀)" htmlFor="c-seed">
-              <Input
-                id="c-seed"
-                value={form.seedParent}
-                onChange={(e) => setForm({ ...form, seedParent: e.target.value })}
-                placeholder="Rosa gallica"
-              />
-            </Field>
-            <Field label="Parent pollen (♂)" htmlFor="c-pollen">
-              <Input
-                id="c-pollen"
-                value={form.pollenParent}
-                onChange={(e) => setForm({ ...form, pollenParent: e.target.value })}
-                placeholder="Rosa moschata"
-              />
-            </Field>
-            <Field label="Date de pollinisation" htmlFor="c-date">
-              <Input
-                id="c-date"
-                type="date"
-                value={form.pollinationDate}
-                onChange={(e) => setForm({ ...form, pollinationDate: e.target.value })}
-              />
-            </Field>
-            <Field label="Remarques" htmlFor="c-remarks">
-              <Input
-                id="c-remarks"
-                value={form.remarks}
-                onChange={(e) => setForm({ ...form, remarks: e.target.value })}
-                placeholder="Observations…"
-              />
-            </Field>
-          </div>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="ghost" onClick={() => { setCreating(false); resetForm() }}>
-              Annuler
-            </Button>
-            <Button onClick={createCross} disabled={!form.code.trim()}>
-              Créer
-            </Button>
-          </div>
-        </Card>
-      ) : null}
-
-      {crosses.length === 0 ? (
-        <EmptyState
-          icon={<Flower2 className="size-8" />}
-          title="Aucun croisement"
-          description="Commencez par enregistrer un croisement entre deux rosiers parents."
-        />
-      ) : (
-        <div className="grid gap-3">
-          {crosses.map((c) =>
-            editingId === c.id ? (
-              <CrossEditRow key={c.id} cross={c} onDone={() => setEditingId(null)} />
-            ) : (
-              <Card key={c.id} className="flex flex-wrap items-center gap-x-6 gap-y-2 p-4">
-                <div className="flex items-center gap-3">
-                  <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 font-serif text-lg text-primary">
-                    {c.code}
-                  </span>
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {c.seedParent || "?"} <span className="text-muted-foreground">×</span>{" "}
-                      {c.pollenParent || "?"}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      Pollinisé le {formatDate(c.pollinationDate)}
-                    </p>
-                  </div>
-                </div>
-                <div className="ml-auto flex items-center gap-3">
-                  <Badge tone="primary">
-                    {hipHarvests.filter((h) => h.crossId === c.id).length} récolte(s)
-                  </Badge>
-                  {c.remarks ? (
-                    <span className="max-w-[220px] truncate text-xs text-muted-foreground" title={c.remarks}>
-                      {c.remarks}
-                    </span>
-                  ) : null}
-                  <Button variant="ghost" size="sm" onClick={() => setEditingId(c.id)} className="gap-1">
-                    <Pencil className="size-3.5" /> Éditer
-                  </Button>
-                </div>
-              </Card>
-            ),
-          )}
-        </div>
-      )}
-    </div>
-  )
+  return <div className="flex flex-col gap-6">
+    <SectionHeading title="Croisements & récoltes" description="Organisez chaque couple, ses lots, puis le suivi individuel des fruits." action={<div className="flex gap-2"><Button variant="outline" className="gap-1.5"><Flower2 className="size-4" /> Pollen</Button><Button onClick={() => setCreating((v) => !v)} className="gap-1.5"><Plus className="size-4" /> Nouveau croisement</Button></div>} />
+    {creating ? <Card className="p-5"><div className="grid gap-4 sm:grid-cols-2"><Field label="Parent porte-graine (♀)"><Input value={form.seedParent} onChange={(e) => setForm({ ...form, seedParent: e.target.value })} placeholder="Black Baccara" /></Field><Field label="Parent pollen (♂)"><Input value={form.pollenParent} onChange={(e) => setForm({ ...form, pollenParent: e.target.value })} placeholder="Grande Amore" /></Field></div><div className="mt-4 flex justify-end gap-2"><Button variant="ghost" onClick={() => setCreating(false)}>Annuler</Button><Button onClick={createCross} disabled={!form.seedParent.trim() || !form.pollenParent.trim()}>Créer le couple</Button></div></Card> : null}
+    {crosses.length === 0 ? <EmptyState icon={<Flower2 className="size-8" />} title="Aucun couple enregistré" description="Commencez par créer un couple de parents, puis ajoutez son premier lot." /> : <div className="grid gap-3">{crosses.map((item) => <CrossCard key={item.id} cross={item} expanded={open === item.id} onToggle={() => setOpen(open === item.id ? null : item.id)} />)}</div>}
+  </div>
 }
 
-function CrossEditRow({ cross: c, onDone }: { cross: Cross; onDone: () => void }) {
-  const { cross, run } = useData()
-  const [draft, setDraft] = useState({
-    code: c.code,
-    seedParent: c.seedParent,
-    pollenParent: c.pollenParent,
-    pollinationDate: toDateInput(c.pollinationDate),
-    remarks: c.remarks,
-  })
-
-  function save() {
-    run(() =>
-      cross.updatePollination(c, {
-        code: draft.code,
-        seedParent: draft.seedParent,
-        pollenParent: draft.pollenParent,
-        pollinationDate: fromDateInput(draft.pollinationDate),
-        remarks: draft.remarks,
-      }),
-    )
-    onDone()
+function CrossCard({ cross, expanded, onToggle }: { cross: Cross; expanded: boolean; onToggle: () => void }) {
+  const { cross: service, run } = useData()
+  const lots = service.listLots(cross.id)
+  const [adding, setAdding] = useState(false)
+  const [flowers, setFlowers] = useState("")
+  function addLot() {
+    const lot = run(() => service.createLot({ crossId: cross.id, pollinationDate: null, location: "", containers: "", pollenSource: cross.pollenParent, flowerCount: null, remarks: "" }))
+    if (flowers) run(() => service.createFruits(lot, Number(flowers)))
+    setFlowers(""); setAdding(false)
   }
-
-  return (
-    <Card className="p-4">
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Code">
-          <Input value={draft.code} onChange={(e) => setDraft({ ...draft, code: e.target.value })} />
-        </Field>
-        <Field label="Parent porte-graine (♀)">
-          <Input value={draft.seedParent} onChange={(e) => setDraft({ ...draft, seedParent: e.target.value })} />
-        </Field>
-        <Field label="Parent pollen (♂)">
-          <Input value={draft.pollenParent} onChange={(e) => setDraft({ ...draft, pollenParent: e.target.value })} />
-        </Field>
-        <Field label="Date de pollinisation">
-          <Input
-            type="date"
-            value={draft.pollinationDate}
-            onChange={(e) => setDraft({ ...draft, pollinationDate: e.target.value })}
-          />
-        </Field>
-        <Field label="Remarques">
-          <Input value={draft.remarks} onChange={(e) => setDraft({ ...draft, remarks: e.target.value })} />
-        </Field>
-      </div>
-      <div className="mt-4 flex justify-end gap-2">
-        <Button variant="ghost" onClick={onDone} className="gap-1">
-          <X className="size-4" /> Annuler
-        </Button>
-        <Button onClick={save} className="gap-1">
-          <Check className="size-4" /> Enregistrer
-        </Button>
-      </div>
-    </Card>
-  )
+  return <Card className="overflow-hidden"><button onClick={onToggle} className="flex w-full items-center gap-4 p-4 text-left hover:bg-muted/30"><span className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">{expanded ? <ChevronDown className="size-5" /> : <ChevronRight className="size-5" />}</span><div className="min-w-0"><p className="font-medium">{cross.seedParent} <span className="text-muted-foreground">×</span> {cross.pollenParent}</p><p className="text-xs text-muted-foreground">Racine unique · {lots.length} lot{lots.length > 1 ? "s" : ""}</p></div><Badge tone="primary" className="ml-auto">{lots.length} lot{lots.length > 1 ? "s" : ""}</Badge></button>{expanded ? <div className="border-t border-border bg-muted/10 p-4"><div className="mb-3 flex items-center justify-between"><h3 className="text-sm font-medium">Lots du couple</h3><Button size="sm" onClick={() => setAdding((v) => !v)} className="gap-1"><Plus className="size-3.5" /> Ajouter un lot</Button></div>{adding ? <div className="mb-3 flex flex-wrap items-end gap-3 rounded-lg border border-dashed border-border p-3"><Field label="Fleurs pollinisées"><Input className="w-36" type="number" min="1" placeholder="Vide au départ" value={flowers} onChange={(e) => setFlowers(e.target.value)} /></Field><Button onClick={addLot}>Créer le lot</Button></div> : null}{lots.length ? <div className="grid gap-2">{lots.map((lot) => <LotRow key={lot.id} lot={lot} />)}</div> : <p className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">Aucun lot. Ajoutez le lot A pour commencer.</p>}</div> : null}</Card>
 }
+
+function LotRow({ lot }: { lot: CrossLot }) { const { cross } = useData(); const fruits = cross.listFruits(lot.id); return <div className="flex items-center gap-3 rounded-lg border border-border bg-background p-3"><span className="font-serif text-lg text-primary">{lot.lotLetter}</span><div><p className="text-sm font-medium">Lot {lot.lotLetter}</p><p className="text-xs text-muted-foreground">{lot.flowerCount ? `${lot.flowerCount} fruit${lot.flowerCount > 1 ? "s" : ""} suivi(s)` : "Suivi des fruits indisponible"}</p></div><Button variant="outline" size="sm" disabled={!fruits.length} className="ml-auto gap-1"><Sprout className="size-3.5" /> Suivi des fruits</Button></div> }
