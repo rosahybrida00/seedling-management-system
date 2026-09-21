@@ -607,6 +607,12 @@ function CroisementContent() {
         description="Suivi des pollinisations, nouaison, fruits, lots de pollen, traitements phytosanitaires et imputabilité."
       />
 
+      <div className="rounded-lg border border-primary/20 bg-primary/5 px-4 py-3 text-sm text-foreground">
+        <span className="font-medium text-primary">Cascade de traçabilité :</span>{" "}
+        chaque couple possède sa racine, ses lots (A, B, C…), puis ses fruits (a, b, c…).
+        Les semis ne sont créés qu&apos;après une récolte validée avec des graines comptées.
+      </div>
+
       <div className="flex gap-2">
         <button
           onClick={() => setActiveTab("crosses")}
