@@ -183,6 +183,7 @@ function CroisementContent() {
   const [creating, setCreating] = useState(false)
   const [lotParentCross, setLotParentCross] = useState<Cross | null>(null)
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [expandedCrossId, setExpandedCrossId] = useState<string | null>(null)
   
   const [form, setForm] = useState({
     code: "",
@@ -358,6 +359,8 @@ function CroisementContent() {
 
     const lotIdx = count ?? 0
     const lot = lotLetter(lotIdx)
+    const year = new Date(form.pollinationDate).getFullYear() || new Date().getFullYear()
+    const lotCode = `${base}-${year}-${lot}`
 
     const climateData: Record<string, unknown> = await fetchHistoricalWeather(form.pollinationDate)
     if (form.tempStress) climateData.temperature_observed = form.tempStress
@@ -366,14 +369,14 @@ function CroisementContent() {
 
     const payload: Record<string, any> = {
       user_id: authData.user.id,
-      code: base,
+      code: lotCode,
       seed_parent: seedVal,
       pollen_parent: pollenVal,
       pollination_date: fromDateInput(form.pollinationDate),
       remarks: form.remarks || "",
       base_syllable: base,
       lot_letter: lot,
-      flower_letter: flower,
+      flower_letter: flowerLetter(0),
       climate_data: climateData,
       status: "En cours",
       flower_count: Number.parseInt(form.pollinatedFlowersCount, 10) || 1,
@@ -407,10 +410,7 @@ function CroisementContent() {
       const fruitsToCreate = Array.from({ length: flowerCount }, (_, index) => ({
         user_id: authData.user.id,
         cross_id: createdCross.id,
-        fruit_name:
-          lot === "A" && fruitNames[index]
-            ? fruitNames[index]
-            : `${base}-${lot}-${flowerLetter(index)}`,
+        fruit_name: `${base}-${year}-${lot}-${flowerLetter(index)}`,
         flower_index: index + 1,
         climate_data: climateData,
       }))
@@ -601,7 +601,7 @@ function CroisementContent() {
     <div className="flex flex-col gap-5">
       <SectionHeading
         title="Croisements"
-        description="Suivi des pollinisations, nouaison, fruits, lots de pollen, traitements phytosanitaires et imputabilité."
+        description="Enregistrement des croisements, lots de pollen, traitements phytosanitaires et traçabilité des parents."
       />
 
       <div className="flex gap-2">
@@ -615,17 +615,7 @@ function CroisementContent() {
         >
           <Flower2 className="size-4" /> Croisements
         </button>
-        <button
-          onClick={() => setActiveTab("fruits")}
-          className={
-            activeTab === "fruits"
-              ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary"
-              : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
-          }
-        >
-          <Cherry className="size-4" /> Module Fruits
-        </button>
-        <button
+              <button
           onClick={() => setActiveTab("pollen")}
           className={
             activeTab === "pollen"
@@ -789,7 +779,8 @@ function CroisementContent() {
               {crosses.map((c) => {
                 const cTreatments = treatmentsByCross.get(c.id) ?? []
                 return (
-                  <Card key={c.id} className="p-4">
+                  <Card key={c.id} className="p-4" onClick={() => setExpandedCrossId(expandedCrossId === c.id ? null : c.id)}>
+
                     {editingId === c.id ? (
                       <CrossEditRow cross={c} onSave={(changes) => updateCross(c, changes)} onCancel={() => setEditingId(null)} />
                     ) : (
@@ -851,6 +842,20 @@ function CroisementContent() {
                       </div>
                     ) : null}
 
+                    {expandedCrossId === c.id ? (
+                      <div className="mt-3 border-t border-border pt-3">
+                        <p className="mb-2 text-xs font-medium text-muted-foreground">Lot {c.code} · fruits pollinisés</p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {fruits.filter((fruit) => fruit.cross_id === c.id).map((fruit) => (
+                            <div key={fruit.id} className="rounded-md border border-border bg-muted/20 px-3 py-2 text-sm">
+                              <span className="font-medium">{fruit.fruit_name}</span>
+                              <span className="ml-2 text-xs text-muted-foreground">{fruit.status} · {fruit.seed_count} graine(s)</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
                     {cTreatments.length > 0 ? (
                       <div className="mt-2 border-t border-border pt-2">
                         <p className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
@@ -874,10 +879,8 @@ function CroisementContent() {
             </div>
           )}
         </>
-      ) : activeTab === "pollen" ? (
-        <PollenPanel pollenLots={pollenLots} onRefresh={fetchData} />
       ) : (
-        <FruitsPanel fruits={fruits} crosses={crosses} onRefresh={fetchData} />
+        <PollenPanel pollenLots={pollenLots} onRefresh={fetchData} />
       )}
     </div>
   )
