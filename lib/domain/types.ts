@@ -42,14 +42,47 @@ export interface Entity {
  * `code` est la clé stable métier (ex. "A").
  */
 export interface Cross extends Entity {
-  code: string
+  /** Racine stable du couple de parents, sans numéro de lot. */
+  root: string
   /** Parent femelle (porte-graine). */
   seedParent: string
   /** Parent mâle (pollen). */
   pollenParent: string
-  /** Date de pollinisation (ISO 8601), optionnelle tant que non réalisée. */
-  pollinationDate: string | null
+  /** @deprecated La date appartient désormais au lot. */
+  pollinationDate?: string | null
   remarks: string
+}
+
+/** Lot produit par un couple. Une lettre est attribuée par couple. */
+export interface CrossLot extends Entity {
+  crossId: string
+  lotLetter: string
+  pollinationDate: string | null
+  location: string
+  containers: string
+  pollenSource: string
+  flowerCount: number | null
+  remarks: string
+}
+
+export type FruitOutcome = "pending" | "harvested" | "aborted"
+
+export interface CrossFruit extends Entity {
+  lotId: string
+  fruitLetter: string
+  outcome: FruitOutcome
+  harvestDate: string | null
+  calibre: string
+  maturation: string
+  seedCount: number | null
+  extractionStatus: string
+  abortionCauses: string[]
+}
+
+export interface EventLog extends Entity {
+  type: "action" | "weather_alert"
+  label: string
+  payload: Record<string, unknown>
 }
 
 /**

@@ -8,13 +8,14 @@
 //     réattribué par la couche de stockage.
 // ---------------------------------------------------------------------------
 
-import type { Cross, HipHarvest } from "@/lib/domain/types"
+import type { Cross, CrossFruit, CrossLot, EventLog, HipHarvest } from "@/lib/domain/types"
 import { newId, nowIso, normalizeCode } from "@/lib/domain/ids"
 import { store as defaultStore, type JsonStore } from "@/lib/store/jsonStore"
 import { mutate, upsertByIdOrStableKey } from "@/lib/store/repository"
 
 export interface CreateCrossInput {
   code: string
+  root?: string
   seedParent: string
   pollenParent: string
   pollinationDate?: string | null
@@ -52,6 +53,7 @@ export class CrossService {
     const cross: Cross = {
       id: newId(), // ID unifié, défini une seule fois
       code: input.code.trim(),
+      root: input.root?.trim() || input.code.trim(),
       seedParent: input.seedParent.trim(),
       pollenParent: input.pollenParent.trim(),
       pollinationDate: input.pollinationDate ?? null,
@@ -83,6 +85,54 @@ export class CrossService {
       upsertByIdOrStableKey(items, next, (c) => normalizeCode(c.code)),
     )
     return next
+  }
+
+  // ----- Lots et fruits ----------------------------------------------------
+
+  listLots(crossId?: string): CrossLot[] {
+    const lots = this.store.getAll("crossLots")
+    return crossId ? lots.filter((lot) => lot.crossId === crossId) : lots
+  }
+
+  listFruits(lotId?: string): CrossFruit[] {
+    const fruits = this.store.getAll("crossFruits")
+    return lotId ? fruits.filter((fruit) => fruit.lotId === lotId) : fruits
+  }
+
+  createLot(input: Omit<CrossLot, "id" | "createdAt" | "updatedAt" | "lotLetter">): CrossLot {
+    const ts = nowIso()
+    const existing = this.listLots(input.crossId)
+    const lotLetter = String.fromCharCode(65 + existing.length)
+    const lot: CrossLot = { ...input, id: newId(), lotLetter, createdAt: ts, updatedAt: ts }
+    mutate(this.store, "crossLots", (items) => [...items, lot])
+    this.log("lot.created", `Lot ${lotLetter} créé`, { lotId: lot.id, crossId: lot.crossId })
+    return lot
+  }
+
+  createFruits(lot: CrossLot, count: number): CrossFruit[] {
+    if (!Number.isInteger(count) || count < 1) throw new Error("Le nombre de fleurs doit être positif")
+    const ts = nowIso()
+    const fruits = Array.from({ length: count }, (_, index) => ({
+      id: newId(), lotId: lot.id, fruitLetter: String.fromCharCode(97 + index), outcome: "pending" as const,
+      harvestDate: null, calibre: "", maturation: "", seedCount: null, extractionStatus: "", abortionCauses: [], createdAt: ts, updatedAt: ts,
+    }))
+    mutate(this.store, "crossFruits", (items) => [...items.filter((fruit) => fruit.lotId !== lot.id), ...fruits])
+    mutate(this.store, "crossLots", (items) => items.map((item) => item.id === lot.id ? { ...item, flowerCount: count, updatedAt: ts } : item))
+    return fruits
+  }
+
+  updateFruit(fruit: CrossFruit, changes: Partial<CrossFruit>): CrossFruit {
+    const next = { ...fruit, ...changes, updatedAt: nowIso() }
+    mutate(this.store, "crossFruits", (items) => items.map((item) => item.id === fruit.id ? next : item))
+    this.log("fruit.updated", `Fruit ${next.fruitLetter} mis à jour`, { fruitId: next.id })
+    return next
+  }
+
+  listEventLog(): EventLog[] { return this.store.getAll("eventLog") }
+
+  private log(type: EventLog["type"], label: string, payload: Record<string, unknown>): void {
+    const ts = nowIso()
+    mutate(this.store, "eventLog", (items) => [...items, { id: newId(), type: type === "weather_alert" ? type : "action", label, payload, createdAt: ts, updatedAt: ts }])
   }
 
   // ----- Récoltes (fruits) -------------------------------------------------

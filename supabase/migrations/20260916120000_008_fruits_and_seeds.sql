@@ -28,6 +28,10 @@ create table if not exists public.harvested_seeds (
   unique(fruit_id, seed_number)
 );
 
+-- A code métier ne doit jamais être réattribué après suppression ou archivage.
+create unique index if not exists idx_harvested_seeds_seed_name_unique
+  on public.harvested_seeds(seed_name);
+
 alter table public.cross_fruits enable row level security;
 alter table public.harvested_seeds enable row level security;
 

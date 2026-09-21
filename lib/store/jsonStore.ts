@@ -15,6 +15,9 @@
 
 import type {
   Cross,
+  CrossFruit,
+  CrossLot,
+  EventLog,
   Greenhouse,
   GreenhouseTable,
   HipHarvest,
@@ -26,6 +29,9 @@ import type {
 export interface Database {
   version: number
   crosses: Cross[]
+  crossLots: CrossLot[]
+  crossFruits: CrossFruit[]
+  eventLog: EventLog[]
   hipHarvests: HipHarvest[]
   sowingBatches: SowingBatch[]
   seedlings: Seedling[]
@@ -42,6 +48,9 @@ function emptyDatabase(): Database {
   return {
     version: CURRENT_VERSION,
     crosses: [],
+    crossLots: [],
+    crossFruits: [],
+    eventLog: [],
     hipHarvests: [],
     sowingBatches: [],
     seedlings: [],
@@ -115,6 +124,9 @@ export class JsonStore {
     return {
       version: CURRENT_VERSION,
       crosses: parsed.crosses ?? base.crosses,
+      crossLots: parsed.crossLots ?? base.crossLots,
+      crossFruits: parsed.crossFruits ?? base.crossFruits,
+      eventLog: parsed.eventLog ?? base.eventLog,
       hipHarvests: parsed.hipHarvests ?? base.hipHarvests,
       sowingBatches: parsed.sowingBatches ?? base.sowingBatches,
       seedlings: parsed.seedlings ?? base.seedlings,
