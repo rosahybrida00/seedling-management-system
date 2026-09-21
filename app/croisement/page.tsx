@@ -466,22 +466,26 @@ function CroisementContent() {
     const { error } = await supabase.from("crosses").update({ ...changes, automatic_synthesis: synthesis }).eq("id", c.id)
     if (error) console.error("Erreur update croisement:", error)
 
-    const previousGerminated = c.germinated_seeds ?? 0
-    const nextGerminated = changes.germinated_seeds ?? previousGerminated
-    const newlyGerminated = nextGerminated - previousGerminated
-    if (!error && newlyGerminated > 0) {
-      await injectGerminatedSeedlings({ ...c, ...changes }, newlyGerminated)
+    const nextCross = { ...c, ...changes }
+    const wasHarvested = c.status === "Récolté" && (c.total_seeds ?? 0) > 0
+    const isHarvested = nextCross.status === "Récolté" && (nextCross.total_seeds ?? 0) > 0
+    if (!error && !wasHarvested && isHarvested) {
+      await migrateHarvestedSeeds(nextCross)
     }
 
     fetchData()
   }
 
-  async function injectGerminatedSeedlings(cross: Cross, count: number) {
+  async function migrateHarvestedSeeds(cross: Cross) {
+    const seedCount = cross.total_seeds ?? 0
+    if (seedCount <= 0 || cross.status !== "Récolté") return
+
     let harvest = harvests.find((h) => h.cross_id === cross.id)
+
     if (!harvest) {
       const { data, error } = await supabase
         .from("hip_harvests")
-        .insert({ cross_id: cross.id, code: cross.code, harvest_date: null, seed_count: cross.total_seeds ?? 0, remarks: "" })
+        .insert({ cross_id: cross.id, code: cross.code, harvest_date: null,           seed_count: seedCount, remarks: "" })
         .select()
         .maybeSingle()
       if (error || !data) {
@@ -505,7 +509,7 @@ function CroisementContent() {
           hip_harvest_id: harvest.id,
           code: harvest.code,
           sowing_date: new Date().toISOString(),
-          seed_count: cross.total_seeds ?? 0,
+          seed_count: seedCount,
           remarks: "",
         })
         .select("id, code")
@@ -517,16 +521,16 @@ function CroisementContent() {
       batch = data as { id: string; code: string }
     }
 
-    const { count: existingCount } = await supabase
+    const { data: existingSeedlings } = await supabase
       .from("seedlings")
-      .select("id", { count: "exact", head: true })
+      .select("code, index")
       .eq("batch_id", batch.id)
 
     const lotIdx = lotIndexFromLetter(cross.lot_letter)
     const flowerIdx = flowerIndexFromLetter(cross.flower_letter)
-    const startIndex = (existingCount ?? 0) + 1
+    const startIndex = Math.max(0, ...(existingSeedlings ?? []).map((item) => item.index ?? 0)) + 1
 
-    const rows = Array.from({ length: count }, (_, i) => {
+    const rows = Array.from({ length: seedCount }, (_, i) => {
       const seedlingIndex = startIndex + i
       return {
         batch_id: batch!.id,
