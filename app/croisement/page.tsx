@@ -1143,7 +1143,8 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
         Array.from({ length: count }, (_, index) => ({
           user_id: userData.user.id,
           fruit_id: fruit.id,
-          seed_name: `${fruit.fruit_name.replace(/-?$/, "-")}${index + 1}`,
+          cross_id: fruit.cross_id,
+          seed_name: `${fruit.fruit_name.replace(/-+$/, "")}-${harvestYear}-${index + 1}`,
           seed_number: index + 1,
           harvest_year: harvestYear,
           status: "à semer",
@@ -1202,7 +1203,7 @@ function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; cro
                     <option value="">Table</option>
                     {tables.filter((table) => table.greenhouse_id === greenhouseId).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
                   </Select>
-                  <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={Boolean(checklist.mature)} onChange={(event) => setChecklist({ ...checklist, mature: event.target.checked })} /> mûr</label>
+                  <div className="grid w-full gap-2 rounded-md border border-border p-2 text-xs sm:grid-cols-3"><fieldset><legend className="mb-1 font-medium">Stades et dynamiques de la nouaison</legend><div className="grid gap-1">{[["vigoureux","Vigoureux / Croissance rapide"],["optimal","Développement optimal"],["retard","Retard de développement / Croissance lente"],["chetif","Chétif"],["stagnation","Stagnation / Évolution ralentie"]].map(([key, label]) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={Boolean(checklist[key])} onChange={(event) => setChecklist({ ...checklist, [key]: event.target.checked })} /> {label}</label>)}</div></fieldset><fieldset><legend className="mb-1 font-medium">Calibres</legend><div className="grid gap-1">{[["petit","Petit / Fin"],["moyen","Moyen / Standard"],["gros","Gros / Développé"]].map(([key, label]) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={Boolean(checklist[key])} onChange={(event) => setChecklist({ ...checklist, [key]: event.target.checked })} /> {label}</label>)}</div></fieldset><fieldset><legend className="mb-1 font-medium">Couleurs identifiées</legend><div className="grid gap-1">{[["rouge","Rouge"],["jaune","Jaune"],["orange","Orangé"]].map(([key, label]) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={Boolean(checklist[key])} onChange={(event) => setChecklist({ ...checklist, [key]: event.target.checked })} /> {label}</label>)}</div></fieldset></div>
                   <Button size="sm" onClick={() => saveFruit(fruit)}>Enregistrer</Button>
                   <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
                 </> : <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setEditing(fruit.id); setSeedCount(String(fruit.seed_count)); setChecklist(fruit.checklist ?? {}) }}>

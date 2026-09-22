@@ -11,7 +11,7 @@ export const DEFAULT_LANGUAGE: Language = "fr"
 export const TRANSLATIONS = {
   nav_catalogue: { fr: "Catalogue", en: "Catalogue" },
   nav_croisement: { fr: "Croisement", en: "Crossbreeding" },
-  nav_serre: { fr: "Serre", en: "Greenhouse" },
+  nav_serre: { fr: "Serres & parcelles", en: "Greenhouses & plots" },
   nav_meteo: { fr: "Météo", en: "Weather" },
   nav_bilans: { fr: "Bilans", en: "Reports" },
   nav_profil: { fr: "Profil", en: "Profile" },

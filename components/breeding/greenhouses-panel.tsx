@@ -20,8 +20,8 @@ export function GreenhousesPanel() {
   return (
     <div className="flex flex-col gap-5">
       <SectionHeading
-        title="Serres & tables"
-        description="Organisez vos serres et leurs tables (planches) pour y placer les lots de semis."
+        title="Serres & parcelles"
+        description="Organisez vos serres et leurs parcelles pour y placer les lots de semis."
       />
 
       <Card className="flex flex-wrap items-end gap-3 p-4">
