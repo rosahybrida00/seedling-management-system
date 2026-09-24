@@ -16,6 +16,15 @@ import {
 } from "@/lib/domain/supabase-types"
 import type { Seedling } from "@/lib/domain/supabase-types"
 
+// ---------------------------------------------------------------------------
+// Un semis (seedling) porte désormais directement `cross_id`, `fruit_code`,
+// `seed_code` et `table_id` : il n'a plus besoin d'un lot de semis
+// (sowing_batches) pour savoir d'où il vient ni où il est planté. Le lot
+// reste néanmoins affiché quand il existe (date de semis, nombre de graines
+// d'origine, taux de levée), à titre d'information complémentaire — jamais
+// comme condition pour afficher ou éditer un semis.
+// ---------------------------------------------------------------------------
+
 interface Greenhouse {
   id: string
   name: string
@@ -29,14 +38,25 @@ interface GreenhouseTable {
 
 interface SowingBatch {
   id: string
-  hip_harvest_id: string
-  code: string
-  sowing_date: string
+  cross_id: string
+  fruit_code: string | null
+  sowing_date: string | null
   harvest_date: string | null
   seed_count: number
+  original_seed_count: number | null
+  sprouted_count: number | null
   table_id: string | null
-  remarks: string
-  created_at: string
+  notes: string | null
+  substrate: string | null
+  stratification: string | null
+  stratification_days: number | null
+}
+
+interface CrossInfo {
+  id: string
+  seed_parent: string | null
+  pollen_parent: string | null
+  base_syllable: string | null
 }
 
 // Statut d'évaluation N2 (remplace l'ancien `status` observing/discarded/selected
@@ -61,6 +81,12 @@ const EVALUATION_TO_LEGACY_STATUS: Record<string, Seedling["status"]> = {
   "Éliminé": "discarded",
 }
 
+function legacyStatusToEvaluation(status: Seedling["status"]): string {
+  if (status === "selected") return "Sélectionné"
+  if (status === "discarded") return "Éliminé"
+  return "Évaluation"
+}
+
 export default function SerrePage() {
   return (
     <AppShell>
@@ -72,6 +98,7 @@ export default function SerrePage() {
 function SerreContent() {
   const [seedlings, setSeedlings] = useState<Seedling[]>([])
   const [batches, setBatches] = useState<SowingBatch[]>([])
+  const [crosses, setCrosses] = useState<CrossInfo[]>([])
   const [tables, setTables] = useState<GreenhouseTable[]>([])
   const [greenhouses, setGreenhouses] = useState<Greenhouse[]>([])
   const [loading, setLoading] = useState(true)
@@ -86,24 +113,40 @@ function SerreContent() {
 
   async function fetchData() {
     setLoading(true)
-    const [seed, bat, tbl, gh] = await Promise.all([
+    const [seed, bat, cr, tbl, gh] = await Promise.all([
       supabase.from("seedlings").select("*").order("code"),
       supabase.from("sowing_batches").select("*").order("sowing_date", { ascending: false }),
+      supabase.from("crosses").select("id, seed_parent, pollen_parent, base_syllable"),
       supabase.from("greenhouse_tables").select("id, greenhouse_id, name").order("name"),
       supabase.from("greenhouses").select("id, name").order("name"),
     ])
     if (seed.data) setSeedlings(seed.data as Seedling[])
     if (bat.data) setBatches(bat.data as SowingBatch[])
+    if (cr.data) setCrosses(cr.data as CrossInfo[])
     if (tbl.data) setTables(tbl.data as GreenhouseTable[])
     if (gh.data) setGreenhouses(gh.data as Greenhouse[])
     setLoading(false)
   }
 
-  const batchMap = useMemo(() => {
+  // Un lot de semis (sowing_batches) est retrouvé par couple/fruit plutôt
+  // que par un identifiant que le semis ne porte plus obligatoirement.
+  const batchByFruit = useMemo(() => {
+    const m = new Map<string, SowingBatch>()
+    batches.forEach((b) => { if (b.cross_id && b.fruit_code) m.set(`${b.cross_id}|${b.fruit_code}`, b) })
+    return m
+  }, [batches])
+
+  const batchById = useMemo(() => {
     const m = new Map<string, SowingBatch>()
     batches.forEach((b) => m.set(b.id, b))
     return m
   }, [batches])
+
+  const crossMap = useMemo(() => {
+    const m = new Map<string, CrossInfo>()
+    crosses.forEach((c) => m.set(c.id, c))
+    return m
+  }, [crosses])
 
   const tableMap = useMemo(() => {
     const m = new Map<string, GreenhouseTable>()
@@ -117,10 +160,21 @@ function SerreContent() {
     return m
   }, [greenhouses])
 
+  function batchOf(s: Seedling): SowingBatch | null {
+    if (s.cross_id && s.fruit_code) {
+      const byFruit = batchByFruit.get(`${s.cross_id}|${s.fruit_code}`)
+      if (byFruit) return byFruit
+    }
+    return s.batch_id ? batchById.get(s.batch_id) ?? null : null
+  }
+
+  function tableOf(s: Seedling): GreenhouseTable | null {
+    const directId = s.table_id ?? batchOf(s)?.table_id ?? null
+    return directId ? tableMap.get(directId) ?? null : null
+  }
+
   function seedlingGreenhouseId(s: Seedling): string | null {
-    const batch = batchMap.get(s.batch_id)
-    if (!batch || !batch.table_id) return null
-    const tbl = tableMap.get(batch.table_id)
+    const tbl = tableOf(s)
     return tbl ? tbl.greenhouse_id : null
   }
 
@@ -128,18 +182,15 @@ function SerreContent() {
     const q = query.trim().toLowerCase()
     return seedlings.filter((s) => {
       if (q) {
-        const batch = batchMap.get(s.batch_id)
-        const haystack = `${s.seedling_code ?? ""} ${s.code} ${s.remarks ?? ""} ${s.free_notes ?? ""} ${batch?.code ?? ""} ${batch?.remarks ?? ""}`.toLowerCase()
+        const cross = crossMap.get(s.cross_id)
+        const haystack = `${s.seedling_code ?? ""} ${s.seed_code ?? ""} ${s.code} ${s.fruit_code ?? ""} ${s.remarks ?? ""} ${s.free_notes ?? ""} ${cross?.seed_parent ?? ""} ${cross?.pollen_parent ?? ""}`.toLowerCase()
         if (!haystack.includes(q)) return false
       }
-      if (statusFilter && (s.evaluation_status ?? EVALUATION_TO_LEGACY_STATUS_REVERSE(s.status)) !== statusFilter) return false
-      if (greenhouseFilter) {
-        const ghId = seedlingGreenhouseId(s)
-        if (ghId !== greenhouseFilter) return false
-      }
+      if (statusFilter && (s.evaluation_status ?? legacyStatusToEvaluation(s.status)) !== statusFilter) return false
+      if (greenhouseFilter && seedlingGreenhouseId(s) !== greenhouseFilter) return false
       return true
     })
-  }, [seedlings, query, statusFilter, greenhouseFilter, batchMap, tableMap])
+  }, [seedlings, query, statusFilter, greenhouseFilter, crossMap, batchByFruit, batchById, tableMap])
 
   async function updateSeedling(s: Seedling, changes: Partial<Seedling>) {
     await supabase.from("seedlings").update(changes).eq("id", s.id)
@@ -158,15 +209,11 @@ function SerreContent() {
     const { data: userData } = await supabase.auth.getUser()
     let obtenteur: string | null = null
     if (userData.user) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("obtenteur_name")
-        .eq("id", userData.user.id)
-        .maybeSingle()
+      const { data: profile } = await supabase.from("profiles").select("obtenteur_name").eq("id", userData.user.id).maybeSingle()
       obtenteur = (profile as { obtenteur_name: string | null } | null)?.obtenteur_name ?? null
     }
 
-    const label = s.seedling_code ?? s.code
+    const label = s.seedling_code ?? s.seed_code ?? s.code
     const { error } = await supabase.from("varieties").insert({
       name: label,
       obtenteur,
@@ -175,7 +222,6 @@ function SerreContent() {
     })
 
     if (error) {
-      console.error("Erreur lors de la promotion vers le catalogue général :", error)
       alert(`Promotion impossible : ${error.message}`)
       return
     }
@@ -186,16 +232,18 @@ function SerreContent() {
 
   async function handleExport() {
     const csv = [
-      "Code définitif,Statut,Lot,Date semis,Graines,Serre,Table,Phénotype,Pression sanitaire,Traitement,Motif élimination,Critère sélection,Synthèse automatique,Notes libres,Promu",
+      "Code définitif,Statut,Croisement,Lot,Date semis,Graines,Serre,Table,Phénotype,Pression sanitaire,Traitement,Motif élimination,Critère sélection,Synthèse automatique,Notes libres,Promu",
       ...filtered.map((s) => {
-        const batch = batchMap.get(s.batch_id)
-        const tbl = batch?.table_id ? tableMap.get(batch.table_id) : null
+        const cross = crossMap.get(s.cross_id)
+        const batch = batchOf(s)
+        const tbl = tableOf(s)
         const gh = tbl ? greenhouseMap.get(tbl.greenhouse_id) : null
         return [
-          `"${s.seedling_code ?? s.code}"`,
+          `"${s.seedling_code ?? s.seed_code ?? s.code}"`,
           `"${EVALUATION_STATUS_LABELS[s.evaluation_status ?? ""] ?? s.evaluation_status ?? ""}"`,
-          `"${batch?.code ?? ""}"`,
-          `"${batch ? formatDate(batch.sowing_date) : ""}"`,
+          `"${cross ? `${cross.seed_parent ?? "?"} × ${cross.pollen_parent ?? "?"}` : ""}"`,
+          `"${s.fruit_code ?? batch?.fruit_code ?? ""}"`,
+          `"${batch?.sowing_date ? formatDate(batch.sowing_date) : ""}"`,
           `"${batch?.seed_count ?? ""}"`,
           `"${gh?.name ?? ""}"`,
           `"${tbl?.name ?? ""}"`,
@@ -223,7 +271,7 @@ function SerreContent() {
     <div className="flex flex-col gap-5">
       <SectionHeading
         title="Catalogue des Semis"
-        description="Évaluation des individus Aa1 : phénotype, pression sanitaire, sélection et synthèse automatique. Indépendant du Catalogue Général."
+        description="Évaluation des individus issus des graines récoltées : phénotype, pression sanitaire, sélection et synthèse automatique. Indépendant du Catalogue Général."
         action={
           <Button variant="outline" size="sm" onClick={handleExport} className="gap-1.5">
             <Download className="size-4" /> Exporter
@@ -237,7 +285,7 @@ function SerreContent() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Rechercher par code, lot, notes…"
+            placeholder="Rechercher par code, croisement, notes…"
             className="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground shadow-sm outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
           />
         </div>
@@ -261,18 +309,20 @@ function SerreContent() {
         <EmptyState
           icon={<Sprout className="size-8" />}
           title="Aucun semis trouvé"
-          description="Les semis apparaissent ici automatiquement dès qu'une graine est déclarée germée sur la page Croisement."
+          description="Les semis apparaissent ici automatiquement dès qu'un fruit est récolté sur la page Croisement."
         />
       ) : (
         <div className="grid gap-4">
           {filtered.map((s) => {
-            const batch = batchMap.get(s.batch_id) ?? null
-            const tbl = batch?.table_id ? tableMap.get(batch.table_id) ?? null : null
+            const cross = crossMap.get(s.cross_id) ?? null
+            const batch = batchOf(s)
+            const tbl = tableOf(s)
             const gh = tbl ? greenhouseMap.get(tbl.greenhouse_id) ?? null : null
             return (
               <SeedlingCard
                 key={s.id}
                 seedling={s}
+                cross={cross}
                 batch={batch}
                 table={tbl}
                 greenhouse={gh}
@@ -291,14 +341,9 @@ function SerreContent() {
   )
 }
 
-function EVALUATION_TO_LEGACY_STATUS_REVERSE(status: Seedling["status"]): string {
-  if (status === "selected") return "Sélectionné"
-  if (status === "discarded") return "Éliminé"
-  return "Évaluation"
-}
-
 function SeedlingCard({
   seedling,
+  cross,
   batch,
   table,
   greenhouse,
@@ -310,6 +355,7 @@ function SeedlingCard({
   onPromote,
 }: {
   seedling: Seedling
+  cross: CrossInfo | null
   batch: SowingBatch | null
   table: GreenhouseTable | null
   greenhouse: Greenhouse | null
@@ -320,7 +366,7 @@ function SeedlingCard({
   onDelete: () => void
   onPromote: () => void
 }) {
-  const currentEvaluationStatus = seedling.evaluation_status ?? EVALUATION_TO_LEGACY_STATUS_REVERSE(seedling.status)
+  const currentEvaluationStatus = seedling.evaluation_status ?? legacyStatusToEvaluation(seedling.status)
 
   const [draft, setDraft] = useState({
     evaluation_status: currentEvaluationStatus,
@@ -334,26 +380,19 @@ function SeedlingCard({
     automatic_synthesis: seedling.auto_report ?? "",
   })
 
+  const displayCode = seedling.seedling_code ?? seedling.seed_code ?? seedling.code
+  const fruitLabel = seedling.fruit_code ?? batch?.fruit_code ?? null
+
   function generateSynthesis(): string {
     const parts: string[] = []
-    parts.push(`Semis ${seedling.seedling_code ?? seedling.code}`)
-    if (batch) parts.push(`(lot ${batch.code})`)
+    parts.push(`Semis ${displayCode}`)
+    if (cross) parts.push(`(${cross.seed_parent ?? "?"} × ${cross.pollen_parent ?? "?"}${fruitLabel ? `, fruit ${fruitLabel}` : ""})`)
     parts.push(":")
-    if (draft.phenotype_vigueur) {
-      parts.push(`Sujet présentant ${PHENOTYPE_LABELS[draft.phenotype_vigueur]?.toLowerCase() ?? draft.phenotype_vigueur}.`)
-    }
-    if (draft.pression_sanitaire) {
-      parts.push(`Présence de ${PRESSION_SANITAIRE_LABELS[draft.pression_sanitaire]?.toLowerCase() ?? draft.pression_sanitaire} constatée.`)
-    }
-    if (draft.traitement) {
-      parts.push(`Traitement appliqué : ${TRAITEMENT_LABELS[draft.traitement]?.toLowerCase() ?? draft.traitement}.`)
-    }
-    if (draft.evaluation_status === "Éliminé" && draft.motif_elimination) {
-      parts.push(`Motif d'élimination : ${MOTIF_ELIMINATION_LABELS[draft.motif_elimination]?.toLowerCase() ?? draft.motif_elimination}.`)
-    }
-    if (draft.evaluation_status === "Sélectionné" && draft.critere_selection) {
-      parts.push(`Critère de sélection : ${CRITERE_SELECTION_LABELS[draft.critere_selection]?.toLowerCase() ?? draft.critere_selection}.`)
-    }
+    if (draft.phenotype_vigueur) parts.push(`Sujet présentant ${PHENOTYPE_LABELS[draft.phenotype_vigueur]?.toLowerCase() ?? draft.phenotype_vigueur}.`)
+    if (draft.pression_sanitaire) parts.push(`Présence de ${PRESSION_SANITAIRE_LABELS[draft.pression_sanitaire]?.toLowerCase() ?? draft.pression_sanitaire} constatée.`)
+    if (draft.traitement) parts.push(`Traitement appliqué : ${TRAITEMENT_LABELS[draft.traitement]?.toLowerCase() ?? draft.traitement}.`)
+    if (draft.evaluation_status === "Éliminé" && draft.motif_elimination) parts.push(`Motif d'élimination : ${MOTIF_ELIMINATION_LABELS[draft.motif_elimination]?.toLowerCase() ?? draft.motif_elimination}.`)
+    if (draft.evaluation_status === "Sélectionné" && draft.critere_selection) parts.push(`Critère de sélection : ${CRITERE_SELECTION_LABELS[draft.critere_selection]?.toLowerCase() ?? draft.critere_selection}.`)
     return parts.join(" ")
   }
 
@@ -377,8 +416,6 @@ function SeedlingCard({
     setDraft({ ...draft, automatic_synthesis: generateSynthesis() })
   }
 
-  const displayCode = seedling.seedling_code ?? seedling.code
-
   if (isEditing) {
     return (
       <Card className="p-4">
@@ -388,7 +425,11 @@ function SeedlingCard({
           </span>
           <div>
             <p className="font-serif text-base text-foreground">{displayCode}</p>
-            {batch ? <p className="text-xs text-muted-foreground">Lot {batch.code} · {batch.seed_count} graine(s)</p> : null}
+            <p className="text-xs text-muted-foreground">
+              {cross ? `${cross.seed_parent ?? "?"} × ${cross.pollen_parent ?? "?"}` : null}
+              {fruitLabel ? ` · fruit ${fruitLabel}` : ""}
+              {batch ? ` · ${batch.seed_count} graine(s)` : ""}
+            </p>
           </div>
         </div>
 
@@ -479,11 +520,11 @@ function SeedlingCard({
         </span>
         <div className="flex-1">
           <p className="font-serif text-base leading-tight text-foreground">{displayCode}</p>
-          {batch ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              Lot {batch.code} · {batch.seed_count} graine(s) · semé le {formatDate(batch.sowing_date)}
-            </p>
-          ) : null}
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {cross ? `${cross.seed_parent ?? "?"} × ${cross.pollen_parent ?? "?"}` : null}
+            {fruitLabel ? ` · fruit ${fruitLabel}` : ""}
+            {batch?.sowing_date ? ` · semé le ${formatDate(batch.sowing_date)}` : ""}
+          </p>
         </div>
         <Badge tone={EVALUATION_STATUS_TONES[currentEvaluationStatus] ?? "neutral"}>
           {EVALUATION_STATUS_LABELS[currentEvaluationStatus] ?? currentEvaluationStatus}

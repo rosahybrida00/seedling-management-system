@@ -57,7 +57,4 @@ grant select, insert, update, delete on public.cross_fruits to authenticated;
 
 comment on table public.harvested_seeds is 'Une ligne par graine, code fruit-année-numéro, liée au croisement et à la serre/parcelle.';
 comment on column public.cross_fruits.checklist is 'Cases de nouaison: stades, calibres et couleurs.';
--- L''interface emploie désormais Serres et Parcelles; greenhouse_tables reste le nom SQL historique.
 comment on table public.greenhouse_tables is 'Parcelles (nom SQL historique greenhouse_tables) rattachées à une serre.';
-COMMIT;
-Content missing in function parameters.

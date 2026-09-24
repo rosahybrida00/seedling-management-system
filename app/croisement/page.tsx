@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
-import { Plus, Flower2, Pencil, Check, X, Cherry, Trash2, FlaskConical, FileText, Shield } from "lucide-react"
+import { Plus, Flower2, Trash2, Cherry, FlaskConical, Shield, ArrowLeft, Sprout, Ban, CalendarClock } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
@@ -16,7 +16,32 @@ import {
   AVORTEMENT_LABELS,
   SEED_EXTRACTION_LABELS,
 } from "@/lib/domain/supabase-types"
-import { generateBaseSyllable, lotLetter, flowerLetter, generateFruitCode, generateSeedlingCode, lotIndexFromLetter, flowerIndexFromLetter } from "@/lib/domain/nomenclature"
+import { generateBaseSyllable, pairKey, lotLetter, generateLotCode, generateFruitCode, lotIndexFromLetter } from "@/lib/domain/nomenclature"
+
+// ---------------------------------------------------------------------------
+// Architecture : Couple (parents) -> Lot (une pollinisation, table `crosses`)
+// -> Fruit (une fleur pollinisée, table `cross_fruits`) -> Graine (table
+// `harvested_seeds`). Navigation à 3 niveaux, en mode Focus : cliquer sur
+// une carte l'isole à l'écran ; un bouton retour ramène à la liste. Plus de
+// boutons Éditer/Supprimer visibles en permanence : l'édition se fait en
+// cliquant directement sur un champ (Entrée pour valider), seule une
+// icône de corbeille discrète reste pour supprimer.
+// ---------------------------------------------------------------------------
+
+const PHENOLOGY_STAGES = [
+  "Ovaire noué",
+  "Grossissement du fruit",
+  "Changement de couleur",
+  "Ramollissement / début de maturation",
+  "Fruit à maturité",
+]
+
+// Règle globale de l'appli : cases à cocher / choix prédéfinis partout,
+// pour faciliter les bilans généraux ; seule exception, un champ Remarque
+// en texte libre.
+const CALIBRE_STAGE_OPTIONS = ["Amorce (<5mm)", "Petit (5-10mm)", "Moyen (10-15mm)", "Gros (15-20mm)", "Très gros (>20mm)"]
+const COLOR_OPTIONS = ["Jaune", "Orange", "Rouge"]
+const BEHAVIOR_OPTIONS = ["Normal", "Flétrissement partiel", "Taches / lésions", "Chute imminente", "Attaque insectes/oiseaux"]
 
 interface Cross {
   id: string
@@ -26,38 +51,14 @@ interface Cross {
   pollination_date: string | null
   remarks: string
   created_at: string
-  updated_at: string
   base_syllable: string | null
   lot_letter: string | null
-  flower_letter: string | null
   climate_data: Record<string, unknown> | null
-  status: string | null
-  abort_cause: string | null
-  harvest_data: Record<string, unknown> | null
-  total_seeds: number | null
-  germinated_seeds: number | null
-  failed_seeds: number | null
-  failure_attribution: string | null
-  automatic_synthesis: string | null
-  free_notes: string | null
-  pollinated_flowers_count?: number | null
-  pollen_type?: string | null
-  pollen_lot_id?: string | null
-}
-
-interface HipHarvest {
-  id: string
-  cross_id: string
-  code: string
-  harvest_date: string | null
-  seed_count: number
-  remarks: string
-  fruit_calibre: string | null
-  maturation: string | null
-  avortement_cause: string | null
-  seed_extraction: string | null
-  created_at: string
-  updated_at: string
+  flower_count: number | null
+  pollen_type: string | null
+  pollen_lot_id: string | null
+  location: string | null
+  containers: string | null
 }
 
 interface PollenLot {
@@ -86,10 +87,16 @@ interface HarvestedSeed {
   fruit_id: string
   seed_name: string
   seed_number: number
-  harvest_year: number
-  status: string
-  greenhouse_id: string | null
   greenhouse_table_id: string | null
+}
+
+interface PhenologyObservation {
+  date: string
+  stages: string[]
+  calibre: string
+  couleur: string
+  comportement: string[]
+  remarque: string
 }
 
 interface CrossFruit {
@@ -97,9 +104,15 @@ interface CrossFruit {
   cross_id: string
   fruit_name: string
   flower_index: number
-  status: string
+  status: "suivi" | "récolté" | "vide" | "avorté"
   seed_count: number
-  checklist: Record<string, boolean>
+  checklist: { observations?: PhenologyObservation[] } | null
+  climate_data: Record<string, unknown> | null
+  harvest_date: string | null
+  fruit_calibre: string | null
+  maturation: string | null
+  seed_extraction: string | null
+  failure_causes: string[]
 }
 
 interface VarietySuggestion {
@@ -109,59 +122,10 @@ interface VarietySuggestion {
   source: "catalogue" | "semis"
 }
 
-const CROSS_STATUS_LABELS: Record<string, string> = {
-  "En cours": "En cours",
-  "Récolté": "Récolté",
-  "Avorté": "Avorté",
-}
-
-const CROSS_STATUS_TONES: Record<string, "neutral" | "primary" | "warning" | "danger" | "success"> = {
-  "En cours": "warning",
-  "Récolté": "success",
-  "Avorté": "danger",
-}
-
-const FAILURE_ATTRIBUTION_LABELS: Record<string, string> = {
-  Pollen: "Pollen (Père)",
-  Mère: "Mère",
-  Climat: "Climat",
-  Incompatibilité: "Incompatibilité",
-  "Non déterminé": "Non déterminé",
-}
-
 const TREATMENT_TYPE_LABELS: Record<string, string> = {
   naturelle: "Naturel",
   biologique: "Bio",
   synthese: "Synthèse",
-}
-
-function generateCrossSynthesis(cross: Partial<Cross>): string {
-  const parts: string[] = []
-  const base = cross.base_syllable ?? ""
-  const lot = cross.lot_letter ?? ""
-  const flower = cross.flower_letter ?? ""
-  if (base) parts.push(`Racine phonétique: ${base}.`)
-  if (lot || flower) parts.push(`Code fruit: ${base}${lot}${flower}.`)
-  if (cross.seed_parent || cross.pollen_parent) {
-    parts.push(`Croisement ${cross.seed_parent ?? "?"} × ${cross.pollen_parent ?? "?"}.`)
-  }
-  if (cross.status === "Avorté" && cross.abort_cause) {
-    parts.push(`Croisement avorté — cause: ${cross.abort_cause}.`)
-  }
-  if (cross.status === "Récolté") {
-    const total = cross.total_seeds ?? 0
-    const germ = cross.germinated_seeds ?? 0
-    const failed = cross.failed_seeds ?? 0
-    parts.push(`Récolte: ${total} graines totales, ${germ} germées, ${failed} non-levées.`)
-    if (total > 0) {
-      const rate = ((germ / total) * 100).toFixed(1)
-      parts.push(`Taux de levée: ${rate}%.`)
-    }
-  }
-  if (cross.failure_attribution) {
-    parts.push(`Imputabilité échec: ${FAILURE_ATTRIBUTION_LABELS[cross.failure_attribution] ?? cross.failure_attribution}.`)
-  }
-  return parts.join(" ")
 }
 
 export default function CroisementPage() {
@@ -174,44 +138,45 @@ export default function CroisementPage() {
 
 function CroisementContent() {
   const [crosses, setCrosses] = useState<Cross[]>([])
-  const [harvests, setHarvests] = useState<HipHarvest[]>([])
+  const [fruits, setFruits] = useState<CrossFruit[]>([])
+  const [seeds, setSeeds] = useState<HarvestedSeed[]>([])
   const [pollenLots, setPollenLots] = useState<PollenLot[]>([])
   const [treatments, setTreatments] = useState<Treatment[]>([])
+  const [greenhouses, setGreenhouses] = useState<Array<{ id: string; name: string }>>([])
+  const [tables, setTables] = useState<Array<{ id: string; greenhouse_id: string; name: string }>>([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState<"crosses" | "pollen" | "fruits">("crosses")
-  const [fruits, setFruits] = useState<CrossFruit[]>([])
+  const [activeTab, setActiveTab] = useState<"crosses" | "pollen">("crosses")
   const [creating, setCreating] = useState(false)
-  const [lotParentCross, setLotParentCross] = useState<Cross | null>(null)
-  const [editingId, setEditingId] = useState<string | null>(null)
-  const [expandedCrossId, setExpandedCrossId] = useState<string | null>(null)
-  
+  const [addingLotFor, setAddingLotFor] = useState<{ seedParent: string; pollenParent: string } | null>(null)
+  // Mode Focus : quand focusedKey est renseigné, seule cette carte de couple
+  // est affichée (toutes les autres disparaissent de l'écran).
+  const [focusedKey, setFocusedKey] = useState<string | null>(null)
+  const [focusedLot, setFocusedLot] = useState<string | null>(null)
+
   const [form, setForm] = useState({
-    code: "",
     seedParent: "",
     seedParentId: "",
     pollenParent: "",
     pollenParentId: "",
     pollinationDate: new Date().toISOString().split("T")[0],
-    remarks: "",
-    tempStress: "",
+    location: "",
+    containers: "",
+    temperature: "",
     humidity: "",
-    stressNotes: "",
-    pollinatedFlowersCount: "1",
+    wind: "",
+    precipitation: "",
+    sunshine: "",
+    pollinatedFlowersCount: "",
     pollenType: "frais",
     pollenLotId: "",
+    freshAntherQuality: "",
+    freshDehiscence: "",
   })
 
   const [seedSuggestions, setSeedSuggestions] = useState<VarietySuggestion[]>([])
   const [pollenSuggestions, setPollenSuggestions] = useState<VarietySuggestion[]>([])
   const [showSeedSugg, setShowSeedSugg] = useState(false)
   const [showPollenSugg, setShowPollenSugg] = useState(false)
-  const [fruitNames, setFruitNames] = useState<string[]>([])
-
-  useEffect(() => {
-    const count = Math.max(1, Number.parseInt(form.pollinatedFlowersCount, 10) || 1)
-    const base = generateBaseSyllable(form.seedParent.trim() || "Inconnu", form.pollenParent.trim() || "Inconnu")
-    setFruitNames(Array.from({ length: count }, (_, index) => `${base}-A-${flowerLetter(index)}-`))
-  }, [form.pollinatedFlowersCount, form.seedParent, form.pollenParent])
 
   useEffect(() => {
     fetchData()
@@ -225,998 +190,1016 @@ function CroisementContent() {
         .select("id, name, commercial_name")
         .or(`name.ilike.%${escapedQuery}%,commercial_name.ilike.%${escapedQuery}%`)
         .limit(6),
-      supabase
-        .from("seedlings")
-        .select("id, code")
-        .ilike("code", `%${escapedQuery}%`)
-        .limit(6),
+      supabase.from("seedlings").select("id, code").ilike("code", `%${escapedQuery}%`).limit(6),
     ])
-
     return [
       ...(varieties ?? []).map((item) => ({ ...item, source: "catalogue" as const })),
-      ...(seedlings ?? []).map((item) => ({
-        id: item.id,
-        name: item.code,
-        commercial_name: "Semis",
-        source: "semis" as const,
-      })),
+      ...(seedlings ?? []).map((item) => ({ id: item.id, name: item.code, commercial_name: "Semis", source: "semis" as const })),
     ].slice(0, 8)
   }
 
   useEffect(() => {
     const query = form.seedParent.trim()
-    if (query.length < 1) {
-      setSeedSuggestions([])
-      setShowSeedSugg(false)
-      return
-    }
-
-    const timer = setTimeout(async () => {
-      const data = await searchParents(query)
-      setSeedSuggestions(data)
-      setShowSeedSugg(true)
-    }, 200)
-
+    if (query.length < 1) { setSeedSuggestions([]); setShowSeedSugg(false); return }
+    const timer = setTimeout(async () => { setSeedSuggestions(await searchParents(query)); setShowSeedSugg(true) }, 200)
     return () => clearTimeout(timer)
   }, [form.seedParent])
 
   useEffect(() => {
     const query = form.pollenParent.trim()
-    if (query.length < 1) {
-      setPollenSuggestions([])
-      setShowPollenSugg(false)
-      return
-    }
-
-    const timer = setTimeout(async () => {
-      const data = await searchParents(query)
-      setPollenSuggestions(data)
-      setShowPollenSugg(true)
-    }, 200)
-
+    if (query.length < 1) { setPollenSuggestions([]); setShowPollenSugg(false); return }
+    const timer = setTimeout(async () => { setPollenSuggestions(await searchParents(query)); setShowPollenSugg(true) }, 200)
     return () => clearTimeout(timer)
   }, [form.pollenParent])
 
-  useEffect(() => {
-    const todayStr = new Date().toISOString().split("T")[0]
-    if (form.pollinationDate === todayStr) {
-      setForm((prev) => ({
-        ...prev,
-        tempStress: prev.tempStress || "22",
-        humidity: prev.humidity || "65",
-      }))
-    }
-  }, [form.pollinationDate])
-
   async function fetchData() {
     setLoading(true)
-    const [{ data: cData }, { data: hData }, { data: pData }, { data: tData }, { data: fData }] = await Promise.all([
+    const [{ data: cData }, { data: fData }, { data: sdData }, { data: pData }, { data: tData }, { data: ghData }, { data: gtData }] = await Promise.all([
       supabase.from("crosses").select("*").order("created_at", { ascending: false }),
-      supabase.from("hip_harvests").select("*").order("created_at", { ascending: false }),
+      supabase.from("cross_fruits").select("*").order("flower_index", { ascending: true }),
+      supabase.from("harvested_seeds").select("id, fruit_id, seed_name, seed_number, greenhouse_table_id").order("seed_number"),
       supabase.from("pollen_lots").select("*").order("created_at", { ascending: false }),
       supabase.from("treatments").select("*").order("applied_at", { ascending: false }),
-      supabase.from("cross_fruits").select("*").order("created_at", { ascending: false }),
+      supabase.from("greenhouses").select("id,name").order("name"),
+      supabase.from("greenhouse_tables").select("id,greenhouse_id,name").order("name"),
     ])
     if (cData) setCrosses(cData as Cross[])
-    if (hData) setHarvests(hData as HipHarvest[])
+    if (fData) setFruits(fData as CrossFruit[])
+    if (sdData) setSeeds(sdData as HarvestedSeed[])
     if (pData) setPollenLots(pData as PollenLot[])
     if (tData) setTreatments(tData as Treatment[])
-    if (fData) setFruits(fData as CrossFruit[])
+    if (ghData) setGreenhouses(ghData)
+    if (gtData) setTables(gtData)
     setLoading(false)
   }
 
-  async function fetchHistoricalWeather(date: string): Promise<Record<string, unknown>> {
-    const fallback: Record<string, unknown> = {}
+  // Capture météo complète (pas seulement température/humidité). Si la date
+  // est dans le passé, l'historique de l'appli est interrogé obligatoirement ;
+  // si elle est du jour, la météo en temps réel est utilisée à la place.
+  async function fetchWeatherFor(date: string): Promise<Record<string, unknown>> {
+    const isToday = date === new Date().toISOString().split("T")[0]
+    const fallback: Record<string, unknown> = { requested_date: date, mode: isToday ? "temps_reel" : "historique" }
     try {
       const { data: authData } = await supabase.auth.getUser()
       if (!authData.user) return fallback
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("city, postal_code")
-        .eq("id", authData.user.id)
-        .maybeSingle()
-      const city = profile?.city || profile?.postal_code
-      if (!city) return fallback
-      const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fr&format=json`)
-      const geoData = await geoResponse.json()
-      const geo = geoData?.results?.[0]
-      if (!geo) return fallback
-      const response = await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=${geo.latitude}&longitude=${geo.longitude}&start_date=${date}&end_date=${date}&daily=temperature_2m_mean,relative_humidity_2m_mean,precipitation_sum&timezone=auto`)
+      const { data: profile } = await supabase.from("profiles").select("city, postal_code, latitude, longitude").eq("id", authData.user.id).maybeSingle()
+      const p = profile as { city?: string; postal_code?: string; latitude?: number; longitude?: number } | null
+      let lat = p?.latitude, lon = p?.longitude
+      let placeName = p?.city ?? p?.postal_code ?? null
+      if (lat == null || lon == null) {
+        const city = p?.city || p?.postal_code
+        if (!city) return fallback
+        const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fr&format=json`)
+        const geoData = await geoResponse.json()
+        const geo = geoData?.results?.[0]
+        if (!geo) return fallback
+        lat = geo.latitude; lon = geo.longitude; placeName = geo.name
+      }
+
+      const dailyVars = "temperature_2m_mean,temperature_2m_max,temperature_2m_min,relative_humidity_2m_mean,precipitation_sum,windspeed_10m_max,sunshine_duration,shortwave_radiation_sum"
+      const url = isToday
+        ? `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=${dailyVars}&timezone=auto`
+        : `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${date}&end_date=${date}&daily=${dailyVars}&timezone=auto`
+      const response = await fetch(url)
       if (!response.ok) return fallback
       const data = await response.json()
+      const idx = 0
       return {
         ...fallback,
-        historical_date: date,
-        location: geo.name,
-        temperature_mean: data?.daily?.temperature_2m_mean?.[0] ?? null,
-        humidity_mean: data?.daily?.relative_humidity_2m_mean?.[0] ?? null,
-        precipitation_sum: data?.daily?.precipitation_sum?.[0] ?? null,
-        source: "open-meteo-archive",
+        location: placeName,
+        temperature_mean: data?.daily?.temperature_2m_mean?.[idx] ?? null,
+        temperature_max: data?.daily?.temperature_2m_max?.[idx] ?? null,
+        temperature_min: data?.daily?.temperature_2m_min?.[idx] ?? null,
+        humidity_mean: data?.daily?.relative_humidity_2m_mean?.[idx] ?? null,
+        precipitation_sum: data?.daily?.precipitation_sum?.[idx] ?? null,
+        wind_max: data?.daily?.windspeed_10m_max?.[idx] ?? null,
+        sunshine_duration_s: data?.daily?.sunshine_duration?.[idx] ?? null,
+        radiation_sum: data?.daily?.shortwave_radiation_sum?.[idx] ?? null,
+        source: "open-meteo",
       }
     } catch {
       return fallback
     }
   }
 
-  async function createCross() {
+  function resetForm() {
+    setForm({
+      seedParent: "", seedParentId: "", pollenParent: "", pollenParentId: "",
+      pollinationDate: new Date().toISOString().split("T")[0],
+      location: "", containers: "", temperature: "", humidity: "", wind: "", precipitation: "", sunshine: "",
+      pollinatedFlowersCount: "", pollenType: "frais", pollenLotId: "", freshAntherQuality: "", freshDehiscence: "",
+    })
+  }
+
+  async function createLot() {
     if (!form.seedParent.trim() && !form.pollenParent.trim()) return
-
     const { data: authData } = await supabase.auth.getUser()
-    if (!authData.user) {
-      alert("Vous devez être connecté pour enregistrer un croisement.")
-      return
-    }
+    if (!authData.user) { alert("Vous devez être connecté pour enregistrer un croisement."); return }
 
-    const seedVal = form.seedParent.trim() ? form.seedParent.trim() : "Inconnu"
-    const pollenVal = form.pollenParent.trim() ? form.pollenParent.trim() : "Inconnu"
-
+    const seedVal = form.seedParent.trim() || "Inconnu"
+    const pollenVal = form.pollenParent.trim() || "Inconnu"
+    const key = pairKey(seedVal, pollenVal)
     const base = generateBaseSyllable(seedVal, pollenVal)
 
-    const { count } = await supabase
-      .from("crosses")
-      .select("*", { count: "exact", head: true })
-      .eq("base_syllable", base)
+    const existingLots = crosses.filter((c) => pairKey(c.seed_parent ?? "", c.pollen_parent ?? "") === key)
+    const nextLotIndex = existingLots.length
+    const lot = lotLetter(nextLotIndex)
+    const code = generateLotCode(base, nextLotIndex)
 
-    const lotIdx = count ?? 0
-    const lot = lotLetter(lotIdx)
-    const year = new Date(form.pollinationDate).getFullYear() || new Date().getFullYear()
-    const lotCode = `${base}-${year}-${lot}`
-
-    const climateData: Record<string, unknown> = await fetchHistoricalWeather(form.pollinationDate)
-    if (form.tempStress) climateData.temperature_observed = form.tempStress
+    const climateData: Record<string, unknown> = await fetchWeatherFor(form.pollinationDate)
+    if (form.temperature) climateData.temperature_observed = form.temperature
     if (form.humidity) climateData.humidity_observed = form.humidity
-    if (form.stressNotes) climateData.stress_notes = form.stressNotes
+    if (form.wind) climateData.wind_observed = form.wind
+    if (form.precipitation) climateData.precipitation_observed = form.precipitation
+    if (form.sunshine) climateData.sunshine_observed = form.sunshine
+
+    const flowerCount = form.pollinatedFlowersCount.trim() ? Math.max(1, Number.parseInt(form.pollinatedFlowersCount, 10) || 0) : null
 
     const payload: Record<string, any> = {
       user_id: authData.user.id,
-      code: lotCode,
+      code,
       seed_parent: seedVal,
       pollen_parent: pollenVal,
       pollination_date: fromDateInput(form.pollinationDate),
-      remarks: form.remarks || "",
+      remarks: "",
+      location: form.location || null,
+      containers: form.containers || null,
       base_syllable: base,
       lot_letter: lot,
-      flower_letter: flowerLetter(0),
       climate_data: climateData,
       status: "En cours",
-      flower_count: Number.parseInt(form.pollinatedFlowersCount, 10) || 1,
+      flower_count: flowerCount,
       pollen_type: form.pollenType,
       pollen_lot_id: form.pollenType === "conservé" ? form.pollenLotId || null : null,
-      // Parent names remain traceable even when the catalogue/semis parent is absent.
-      // The legacy foreign keys can reference a different parent table, so omit IDs here.
-      seed_parent_id: null,
-      pollen_parent_id: null,
-      // The connected local schema still references the legacy rose_varieties table.
-      // Keep the exact selected parent names until that legacy FK is aligned with varieties.
-      // This prevents valid catalogue selections from failing on insert.
+      // Pollen frais : observation du jour (qualité des anthères, déhiscence),
+      // les mêmes cases que le module Pollen, hors champs de conservation.
+      pollen_quality: form.pollenType === "frais"
+        ? { anther_quality: form.freshAntherQuality || null, dehiscence: form.freshDehiscence || null }
+        : {},
     }
 
-    const { data: createdCross, error } = await supabase.from("crosses").insert(payload).select("id").single()
+    const { data: createdLot, error } = await supabase.from("crosses").insert(payload).select("*").single()
     if (error) {
-      const details = [error.message, error.details, error.hint, error.code].filter(Boolean).join(" — ")
-      console.error("[v0] Erreur lors de la création du croisement :", {
-        message: error.message,
-        details: error.details,
-        hint: error.hint,
-        code: error.code,
-        payload,
-      })
-      alert(`Erreur lors de la création du croisement : ${details || "échec de l’insertion"}`)
+      const details = [error.message, error.details, error.hint].filter(Boolean).join(" — ")
+      alert(`Erreur lors de la création du lot : ${details || "échec de l'insertion"}`)
       return
     }
 
-    if (createdCross) {
-      const flowerCount = Number.parseInt(form.pollinatedFlowersCount, 10) || 1
-      const fruitsToCreate = Array.from({ length: flowerCount }, (_, index) => ({
-        user_id: authData.user.id,
-        cross_id: createdCross.id,
-        fruit_name: `${base}-${year}-${lot}-${flowerLetter(index)}`,
-        flower_index: index + 1,
-        climate_data: climateData,
-      }))
-      await supabase.from("cross_fruits").insert(fruitsToCreate)
+    if (createdLot && flowerCount) {
+      await createFruitsForLot(createdLot as Cross, flowerCount)
     }
 
     const missingParents = [
-      !form.seedParentId && form.seedParent.trim()
-        ? { name: seedVal, role: "seed" as const, label: "porte-graine" }
-        : null,
-      !form.pollenParentId && form.pollenParent.trim()
-        ? { name: pollenVal, role: "pollen" as const, label: "pollen" }
-        : null,
+      !form.seedParentId && form.seedParent.trim() ? { name: seedVal, role: "seed" as const, label: "porte-graine" } : null,
+      !form.pollenParentId && form.pollenParent.trim() ? { name: pollenVal, role: "pollen" as const, label: "pollen" } : null,
     ].filter(Boolean) as Array<{ name: string; role: "seed" | "pollen"; label: string }>
 
-    if (createdCross && missingParents.length > 0) {
+    if (createdLot && missingParents.length > 0) {
       await supabase.from("parent_alerts").insert(
         missingParents.map((parent) => ({
           parent_name: parent.name,
           parent_role: parent.role,
-          cross_id: createdCross.id,
+          cross_id: createdLot.id,
           message: `Ajouter le parent ${parent.label} « ${parent.name} » au catalogue.`,
         })),
       )
-      alert(`Croisement créé. Parent à ajouter au catalogue : ${missingParents.map((parent) => parent.name).join(", ")}.`)
     }
 
-    setForm({
-      code: "",
-      seedParent: "",
-      seedParentId: "",
-      pollenParent: "",
-      pollenParentId: "",
-      pollinationDate: new Date().toISOString().split("T")[0],
-      remarks: "",
-      tempStress: "",
-      humidity: "",
-      stressNotes: "",
-      pollinatedFlowersCount: "1",
-      pollenType: "frais",
-      pollenLotId: "",
-    })
+    resetForm()
     setCreating(false)
-    setLotParentCross(null)
+    setAddingLotFor(null)
+    setFocusedKey(key)
     fetchData()
   }
 
-  async function updateCross(c: Cross, changes: Partial<Cross>) {
-    const synthesis = generateCrossSynthesis({ ...c, ...changes })
-    const { error } = await supabase.from("crosses").update({ ...changes, automatic_synthesis: synthesis }).eq("id", c.id)
-    if (error) console.error("Erreur update croisement:", error)
+  async function createFruitsForLot(lot: Cross, count: number) {
+    const { data: authData } = await supabase.auth.getUser()
+    if (!authData.user) return
+    const lotIndex = lotIndexFromLetter(lot.lot_letter)
+    const rows = Array.from({ length: count }, (_, index) => ({
+      user_id: authData.user.id,
+      cross_id: lot.id,
+      fruit_name: generateFruitCode(lot.base_syllable ?? lot.code, lotIndex, index),
+      flower_index: index + 1,
+      status: "suivi",
+      climate_data: lot.climate_data ?? {},
+    }))
+    const { error } = await supabase.from("cross_fruits").insert(rows)
+    if (error) alert(`Erreur lors de la génération des fruits : ${error.message}`)
+  }
 
-    const nextCross = { ...c, ...changes }
-    const wasHarvested = c.status === "Récolté" && (c.total_seeds ?? 0) > 0
-    const isHarvested = nextCross.status === "Récolté" && (nextCross.total_seeds ?? 0) > 0
-    if (!error && !wasHarvested && isHarvested) {
-      await migrateHarvestedSeeds(nextCross)
-    }
-
+  async function validateFlowerCount(lot: Cross, count: number) {
+    if (!count || count < 1) return
+    const { error } = await supabase.from("crosses").update({ flower_count: count }).eq("id", lot.id)
+    if (error) { alert(`Erreur : ${error.message}`); return }
+    await createFruitsForLot({ ...lot, flower_count: count }, count)
     fetchData()
   }
 
-  async function migrateHarvestedSeeds(cross: Cross) {
-    const seedCount = cross.total_seeds ?? 0
-    if (seedCount <= 0 || cross.status !== "Récolté") return
-
-    let harvest = harvests.find((h) => h.cross_id === cross.id)
-
-    if (!harvest) {
-      const { data, error } = await supabase
-        .from("hip_harvests")
-        .insert({ cross_id: cross.id, code: cross.code, harvest_date: null,           seed_count: seedCount, remarks: "" })
-        .select()
-        .maybeSingle()
-      if (error || !data) {
-        console.error("Erreur création récolte automatique :", error)
-        return
-      }
-      harvest = data as HipHarvest
-    }
-
-    const { data: existingBatches } = await supabase
-      .from("sowing_batches")
-      .select("id, code")
-      .eq("hip_harvest_id", harvest.id)
-      .limit(1)
-
-    let batch = existingBatches?.[0] as { id: string; code: string } | undefined
-    if (!batch) {
-      const { data, error } = await supabase
-        .from("sowing_batches")
-        .insert({
-          hip_harvest_id: harvest.id,
-          code: harvest.code,
-          sowing_date: new Date().toISOString(),
-          seed_count: seedCount,
-          remarks: "",
-        })
-        .select("id, code")
-        .maybeSingle()
-      if (error || !data) {
-        console.error("Erreur création lot de semis automatique :", error)
-        return
-      }
-      batch = data as { id: string; code: string }
-    }
-
-    const { data: existingSeedlings } = await supabase
-      .from("seedlings")
-      .select("code, index")
-      .eq("batch_id", batch.id)
-
-    const lotIdx = lotIndexFromLetter(cross.lot_letter)
-    const flowerIdx = flowerIndexFromLetter(cross.flower_letter)
-    const startIndex = Math.max(0, ...(existingSeedlings ?? []).map((item) => item.index ?? 0)) + 1
-
-    const rows = Array.from({ length: seedCount }, (_, i) => {
-      const seedlingIndex = startIndex + i
-      return {
-        batch_id: batch!.id,
-        code: `${cross.code}${seedlingIndex}`,
-        index: seedlingIndex,
-        status: "observing",
-        remarks: "",
-        seedling_code: generateSeedlingCode(cross.base_syllable ?? cross.code, lotIdx, flowerIdx, seedlingIndex),
-        evaluation_status: "Évaluation",
-        is_promoted_to_variety: false,
-      }
-    })
-
-    const { error: seedlingError } = await supabase.from("seedlings").insert(rows)
-    if (seedlingError) {
-      console.error("Erreur injection semis automatique :", seedlingError)
-    }
+  async function patchLot(lot: Cross, changes: Partial<Cross>) {
+    setCrosses((prev) => prev.map((c) => (c.id === lot.id ? { ...c, ...changes } : c)))
+    const { error } = await supabase.from("crosses").update(changes).eq("id", lot.id)
+    if (error) { alert(`Erreur : ${error.message}`); fetchData() }
   }
 
-  async function deleteCross(id: string) {
-    if (!confirm("Supprimer ce croisement et toutes ses récoltes ?")) return
+  async function deleteLot(id: string) {
+    if (!confirm("Supprimer ce lot et tout son suivi (fruits, graines) ?")) return
     await supabase.from("crosses").delete().eq("id", id)
     fetchData()
   }
 
-  async function createHarvest(crossId: string) {
-    const cross = crosses.find((c) => c.id === crossId)
-    if (!cross) return
-    const count = harvests.filter((h) => h.cross_id === crossId).length
-    const suffix = String.fromCharCode(97 + count)
-    const code = `${cross.code}${suffix}`
-    await supabase.from("hip_harvests").insert({
-      cross_id: crossId,
-      code,
-      harvest_date: null,
+  async function harvestFruit(fruit: CrossFruit, values: {
+    seedCount: number; harvestDate: string; fruitCalibre: string; maturation: string; seedExtraction: string
+    greenhouseId: string; tableId: string
+  }) {
+    const { error } = await supabase.from("cross_fruits").update({
+      status: values.seedCount > 0 ? "récolté" : "vide",
+      seed_count: values.seedCount,
+      harvest_date: fromDateInput(values.harvestDate),
+      harvest_year: values.harvestDate ? new Date(values.harvestDate).getFullYear() : new Date().getFullYear(),
+      fruit_calibre: values.fruitCalibre || null,
+      maturation: values.maturation || null,
+      seed_extraction: values.seedExtraction || null,
+      greenhouse_id: values.greenhouseId || null,
+      greenhouse_table_id: values.tableId || null,
+      failure_causes: [],
+    }).eq("id", fruit.id)
+    if (error) { alert(`Erreur lors de l'enregistrement de la récolte : ${error.message}`); return }
+    fetchData()
+  }
+
+  async function abortFruit(fruit: CrossFruit, causes: string[]) {
+    const { error } = await supabase.from("cross_fruits").update({
+      status: "avorté",
       seed_count: 0,
-      remarks: "",
-    })
+      failure_causes: causes,
+    }).eq("id", fruit.id)
+    if (error) { alert(`Erreur : ${error.message}`); return }
     fetchData()
   }
 
-  async function updateHarvest(h: HipHarvest, changes: Partial<HipHarvest>) {
-    await supabase.from("hip_harvests").update(changes).eq("id", h.id)
-    fetchData()
-  }
-
-  async function deleteHarvest(id: string) {
-    await supabase.from("hip_harvests").delete().eq("id", id)
-    fetchData()
+  // Ajoute une observation de nouaison (indépendante de la récolte) au
+  // suivi phénologique du fruit, étalé sur 4 à 5 mois.
+  async function addPhenologyObservation(fruit: CrossFruit, obs: PhenologyObservation) {
+    const current = fruit.checklist?.observations ?? []
+    const next = { ...(fruit.checklist ?? {}), observations: [...current, obs] }
+    setFruits((prev) => prev.map((f) => (f.id === fruit.id ? { ...f, checklist: next } : f)))
+    const { error } = await supabase.from("cross_fruits").update({ checklist: next }).eq("id", fruit.id)
+    if (error) { alert(`Erreur : ${error.message}`); fetchData() }
   }
 
   const treatmentsByCross = useMemo(() => {
     const m = new Map<string, Treatment[]>()
-    treatments.forEach((t) => {
-      const arr = m.get(t.cross_id) ?? []
-      arr.push(t)
-      m.set(t.cross_id, arr)
-    })
+    treatments.forEach((t) => { const arr = m.get(t.cross_id) ?? []; arr.push(t); m.set(t.cross_id, arr) })
     return m
   }, [treatments])
 
+  const fruitsByLot = useMemo(() => {
+    const m = new Map<string, CrossFruit[]>()
+    fruits.forEach((f) => { const arr = m.get(f.cross_id) ?? []; arr.push(f); m.set(f.cross_id, arr) })
+    return m
+  }, [fruits])
+
+  const seedsByFruit = useMemo(() => {
+    const m = new Map<string, HarvestedSeed[]>()
+    seeds.forEach((s) => { const arr = m.get(s.fruit_id) ?? []; arr.push(s); m.set(s.fruit_id, arr) })
+    return m
+  }, [seeds])
+
+  const couples = useMemo(() => {
+    const m = new Map<string, { seedParent: string; pollenParent: string; baseSyllable: string; lots: Cross[] }>()
+    for (const c of crosses) {
+      const key = pairKey(c.seed_parent ?? "", c.pollen_parent ?? "")
+      if (!m.has(key)) m.set(key, { seedParent: c.seed_parent ?? "?", pollenParent: c.pollen_parent ?? "?", baseSyllable: c.base_syllable ?? generateBaseSyllable(c.seed_parent ?? "", c.pollen_parent ?? ""), lots: [] })
+      m.get(key)!.lots.push(c)
+    }
+    for (const couple of m.values()) couple.lots.sort((a, b) => (a.lot_letter ?? "").localeCompare(b.lot_letter ?? ""))
+    return Array.from(m.entries()).sort((a, b) => {
+      const aDate = a[1].lots[0]?.created_at ?? ""
+      const bDate = b[1].lots[0]?.created_at ?? ""
+      return bDate.localeCompare(aDate)
+    })
+  }, [crosses])
+
+  const focusedCouple = focusedKey ? couples.find(([key]) => key === focusedKey) : null
+
   if (loading) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <Flower2 className="size-8 animate-pulse text-primary" />
-      </div>
-    )
+    return <div className="flex items-center justify-center py-20"><Flower2 className="size-8 animate-pulse text-primary" /></div>
   }
 
   return (
     <div className="flex flex-col gap-5">
-      <SectionHeading
-        title="Croisements"
-        description="Enregistrement des croisements, lots de pollen, traitements phytosanitaires et traçabilité des parents."
-      />
+      {focusedCouple ? null : <SectionHeading title="Croisements" description="Couple de parents, lots de pollinisation, suivi des fruits et récolte des graines." />}
 
-      <div className="flex gap-2">
-        <button
-          onClick={() => setActiveTab("crosses")}
-          className={
-            activeTab === "crosses"
-              ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary"
-              : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
-          }
-        >
-          <Flower2 className="size-4" /> Croisements
-        </button>
-              <button
-          onClick={() => setActiveTab("pollen")}
-          className={
-            activeTab === "pollen"
-              ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary"
-              : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"
-          }
-        >
-          <FlaskConical className="size-4" /> Module Pollen
-        </button>
-      </div>
+      {focusedCouple ? null : (
+        <div className="flex gap-2">
+          <button onClick={() => setActiveTab("crosses")} className={activeTab === "crosses" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}>
+            <Flower2 className="size-4" /> Croisements
+          </button>
+          <button onClick={() => setActiveTab("pollen")} className={activeTab === "pollen" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}>
+            <FlaskConical className="size-4" /> Module Pollen
+          </button>
+        </div>
+      )}
 
       {activeTab === "crosses" ? (
-        <>
-          <div className="flex justify-end">
-<Button onClick={() => { setLotParentCross(null); setCreating((v) => !v) }} className="gap-1.5">
-              <Plus className="size-4" /> Nouveau croisement
-            </Button>
-          </div>
-
-          {creating ? (
-            <Card className="p-4">
-              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-                <div className="relative">
-                  <Field label="Parent porte-graine (♀)" hint="Catalogue et tous vos semis">
-                    <Input
-                      value={form.seedParent}
-                      disabled={Boolean(lotParentCross)}
-                      onChange={(e) => setForm({ ...form, seedParent: e.target.value, seedParentId: "" })}
-                      onFocus={() => { if (seedSuggestions.length > 0) setShowSeedSugg(true) }}
-                      placeholder="Ex: Grande Amore..."
-                    />
-                  </Field>
-                  {showSeedSugg && seedSuggestions.length > 0 ? (
-                    <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
-                      {seedSuggestions.map((s) => (
-                        <div
-                          key={s.id}
-                          className="cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground"
-                          onClick={() => {
-                            setForm({ ...form, seedParent: s.name, seedParentId: s.id })
-                            setShowSeedSugg(false)
-                          }}
-                        >
-                          <span className="font-medium text-foreground">{s.name}</span>
-                          {s.commercial_name && s.commercial_name !== s.name ? (
-                            <span className="text-muted-foreground"> ({s.commercial_name})</span>
-                          ) : null}
-                          <span className="ml-2 text-[10px] uppercase tracking-wide text-primary/70">{s.source}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="relative">
-                  <Field label="Parent pollen (♂)" hint="Catalogue et tous vos semis">
-                    <Input
-                      value={form.pollenParent}
-                      disabled={Boolean(lotParentCross)}
-                      onChange={(e) => setForm({ ...form, pollenParent: e.target.value, pollenParentId: "" })}
-                      onFocus={() => { if (pollenSuggestions.length > 0) setShowPollenSugg(true) }}
-                      placeholder="Ex: Black Baccara..."
-                    />
-                  </Field>
-                  {showPollenSugg && pollenSuggestions.length > 0 ? (
-                    <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
-                      {pollenSuggestions.map((s) => (
-                        <div
-                          key={s.id}
-                          className="cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground"
-                          onClick={() => {
-                            setForm({ ...form, pollenParent: s.name, pollenParentId: s.id })
-                            setShowPollenSugg(false)
-                          }}
-                        >
-                          <span className="font-medium text-foreground">{s.name}</span>
-                          {s.commercial_name && s.commercial_name !== s.name ? (
-                            <span className="text-muted-foreground"> ({s.commercial_name})</span>
-                          ) : null}
-                          <span className="ml-2 text-[10px] uppercase tracking-wide text-primary/70">{s.source}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
-
-                <Field label="Date de pollinisation">
-                  <Input type="date" value={form.pollinationDate} onChange={(e) => setForm({ ...form, pollinationDate: e.target.value })} />
-                </Field>
-
-  <Field label="Nombre de fleurs pollinisées" hint="Quantité de fleurs de ce lot">
-  <Input type="number" min={1} value={form.pollinatedFlowersCount} onChange={(e) => setForm({ ...form, pollinatedFlowersCount: e.target.value })} />
-  </Field>
-  <div className="sm:col-span-2 lg:col-span-3 rounded-md border border-border p-3">
-    <p className="mb-2 text-xs font-medium">Lot de fruits généré automatiquement</p>
-    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-      {fruitNames.map((name, index) => <Input key={`${name}-${index}`} value={name} onChange={(e) => setFruitNames((current) => current.map((item, itemIndex) => itemIndex === index ? e.target.value : item))} aria-label={`Nom du fruit ${index + 1}`} />)}
-    </div>
-  </div>
-
-                <Field label="Type de pollen" hint="Sélectionnez l'origine du pollen">
-                  <Select value={form.pollenType} onChange={(e) => setForm({ ...form, pollenType: e.target.value })}>
-                    <option value="frais">Pollen frais (Utilisation directe)</option>
-                    <option value="conservé">Lot de pollen conservé (Stock)</option>
-                  </Select>
-                </Field>
-
-                {form.pollenType === "conservé" ? (
-                  <Field label="Lot de pollen conservé" hint="Choisir dans le module pollen">
-                    <Select value={form.pollenLotId} onChange={(e) => setForm({ ...form, pollenLotId: e.target.value })}>
-                      <option value="">-- Sélectionner un lot --</option>
-                      {pollenLots.map((pl) => (
-                        <option key={pl.id} value={pl.id}>
-                          Lot #{pl.lot_number} ({pl.rose_name ?? "Inconnu"})
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                ) : null}
-
-                <Field label="Température (°C)" hint="Donnée climatique pour l'imputabilité">
-                  <Input type="number" value={form.tempStress} onChange={(e) => setForm({ ...form, tempStress: e.target.value })} placeholder="22" />
-                </Field>
-                <Field label="Humidité (%)" hint="Donnée climatique pour l'imputabilité">
-                  <Input type="number" value={form.humidity} onChange={(e) => setForm({ ...form, humidity: e.target.value })} placeholder="65" />
-                </Field>
-                <Field label="Notes de stress thermique" hint="Stress climatique constaté">
-                  <Input value={form.stressNotes} onChange={(e) => setForm({ ...form, stressNotes: e.target.value })} placeholder="Canicule, gel..." />
-                </Field>
-              </div>
-
-              <div className="mt-3">
-                <Field label="Remarques">
-                  <Input value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} placeholder="Observations..." />
-                </Field>
-              </div>
-
-              <div className="mt-3 rounded-md bg-primary/5 px-3 py-2">
-                <p className="text-xs text-muted-foreground">
-                  <strong>Code auto-généré :</strong> {form.seedParent && form.pollenParent
-                    ? generateFruitCode(generateBaseSyllable(form.seedParent, form.pollenParent), 0, 0)
-                    : "— (renseignez les parents)"}
-                </p>
-              </div>
-
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="ghost" onClick={() => setCreating(false)}>Annuler</Button>
-                <Button onClick={createCross} disabled={!form.seedParent.trim() && !form.pollenParent.trim()}>Créer</Button>
-              </div>
-            </Card>
-          ) : null}
-
-          {crosses.length === 0 ? (
-            <EmptyState
-              icon={<Flower2 className="size-8" />}
-              title="Aucun croisement"
-              description="Commencez par enregistrer un croisement entre deux rosiers parents. Le code phonétique est généré automatiquement."
-            />
-          ) : (
-            <div className="grid gap-3">
-              {crosses.map((c) => {
-                const cTreatments = treatmentsByCross.get(c.id) ?? []
-                return (
-                  <Card key={c.id} className="p-4" onClick={() => setExpandedCrossId(expandedCrossId === c.id ? null : c.id)}>
-
-                    {editingId === c.id ? (
-                      <CrossEditRow cross={c} onSave={(changes) => updateCross(c, changes)} onCancel={() => setEditingId(null)} />
-                    ) : (
-                      <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-                        <div className="flex items-center gap-3">
-                          <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 font-serif text-lg text-primary">
-                            {c.base_syllable || generateBaseSyllable(c.seed_parent, c.pollen_parent)}
-                          </span>
-                          <div>
-                            <p className="text-sm font-medium text-foreground">
-                              {c.seed_parent || "?"} <span className="text-muted-foreground">×</span> {c.pollen_parent || "?"}
-                            </p>
-                            <p className="text-xs text-muted-foreground">
-                              Pollinisé le {formatDate(c.pollination_date)} {c.pollinated_flowers_count ? `• ${c.pollinated_flowers_count} fleur(s)` : ""}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="ml-auto flex items-center gap-3">
-                          {c.base_syllable ? <Badge tone="accent">Racine: {c.base_syllable}</Badge> : null}
-                          {c.status ? <Badge tone={CROSS_STATUS_TONES[c.status] ?? "neutral"}>{CROSS_STATUS_LABELS[c.status] ?? c.status}</Badge> : null}
-                          {cTreatments.length > 0 ? <Badge tone="neutral"><Shield className="size-3" /> {cTreatments.length} trait.</Badge> : null}
-                          <Button variant="ghost" size="sm" onClick={() => setEditingId(c.id)} className="gap-1">
-                            <Pencil className="size-3.5" /> Éditer
-                          </Button>
-                          <Button variant="outline" size="sm" onClick={() => {
-                            setLotParentCross(c)
-                            setForm((current) => ({
-                              ...current,
-                              seedParent: c.seed_parent ?? "",
-                              pollenParent: c.pollen_parent ?? "",
-                              seedParentId: "",
-                              pollenParentId: "",
-                              pollinationDate: new Date().toISOString().split("T")[0],
-                              pollinatedFlowersCount: "1",
-                              remarks: "",
-                            }))
-                            setCreating(true)
-                          }} className="gap-1">
-                            <Plus className="size-3.5" /> Ajouter un lot
-                          </Button>
-                          <Button variant="destructive" size="sm" onClick={() => deleteCross(c.id)} className="gap-1">
-                            <Trash2 className="size-3.5" />
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {c.automatic_synthesis ? (
-                      <div className="mt-3 rounded-md bg-muted/30 px-3 py-2">
-                        <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
-                          <FileText className="mt-0.5 size-3 shrink-0" />
-                          <span>{c.automatic_synthesis}</span>
-                        </p>
-                      </div>
-                    ) : null}
-                    {c.free_notes ? (
-                      <div className="mt-1 px-3">
-                        <p className="text-xs text-muted-foreground italic">Notes: {c.free_notes}</p>
-                      </div>
-                    ) : null}
-
-                    {expandedCrossId === c.id ? (
-                      <div className="mt-3 border-t border-border pt-3">
-                        <p className="mb-2 text-xs font-medium text-muted-foreground">Lot {c.code} · fruits pollinisés</p>
-                        <div className="grid gap-2 sm:grid-cols-2">
-                          {fruits.filter((fruit) => fruit.cross_id === c.id).map((fruit) => (
-                            <div key={fruit.id} className="rounded-md border border-border bg-muted/20 px-3 py-2 text-sm">
-                              <span className="font-medium">{fruit.fruit_name}</span>
-                              <span className="ml-2 text-xs text-muted-foreground">{fruit.status} · {fruit.seed_count} graine(s)</span>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                    {cTreatments.length > 0 ? (
-                      <div className="mt-2 border-t border-border pt-2">
-                        <p className="mb-1.5 flex items-center gap-1 text-xs font-medium text-muted-foreground">
-                          <Shield className="size-3" /> Traitements phytosanitaires
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {cTreatments.map((t) => (
-                            <Badge key={t.id} tone="neutral">
-                              {t.product_name}
-                              {t.treatment_type ? ` (${TREATMENT_TYPE_LABELS[t.treatment_type] ?? t.treatment_type})` : ""}
-                              {t.repetition_count > 1 ? ` ×${t.repetition_count}` : ""}
-                            </Badge>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-
-                  </Card>
-                )
-              })}
+        focusedCouple ? (
+          <CoupleFocusView
+            coupleKey={focusedCouple[0]}
+            couple={focusedCouple[1]}
+            focusedLot={focusedLot}
+            setFocusedLot={setFocusedLot}
+            fruitsByLot={fruitsByLot}
+            seedsByFruit={seedsByFruit}
+            treatmentsByCross={treatmentsByCross}
+            greenhouses={greenhouses}
+            tables={tables}
+            creatingLot={creating}
+            lotForm={form}
+            setLotForm={setForm}
+            pollenLots={pollenLots}
+            onBack={() => { setFocusedKey(null); setFocusedLot(null); setCreating(false) }}
+            onStartAddLot={() => {
+              setAddingLotFor({ seedParent: focusedCouple[1].seedParent, pollenParent: focusedCouple[1].pollenParent })
+              setForm((f) => ({ ...f, seedParent: focusedCouple[1].seedParent, pollenParent: focusedCouple[1].pollenParent, seedParentId: "", pollenParentId: "", pollinatedFlowersCount: "" }))
+              setCreating(true)
+            }}
+            onCancelAddLot={() => { setCreating(false); setAddingLotFor(null) }}
+            onSubmitLot={createLot}
+            onPatchLot={patchLot}
+            onDeleteLot={deleteLot}
+            onValidateFlowerCount={validateFlowerCount}
+            onHarvestFruit={harvestFruit}
+            onAbortFruit={abortFruit}
+            onAddPhenologyObservation={addPhenologyObservation}
+          />
+        ) : (
+          <>
+            <div className="flex justify-end">
+              <Button onClick={() => { setAddingLotFor(null); resetForm(); setCreating((v) => !v) }} className="gap-1.5">
+                <Plus className="size-4" /> Nouveau croisement
+              </Button>
             </div>
-          )}
-        </>
+
+            {creating && !addingLotFor ? (
+              <LotForm
+                form={form} setForm={setForm} lockParents={false}
+                seedSuggestions={seedSuggestions} pollenSuggestions={pollenSuggestions}
+                showSeedSugg={showSeedSugg} showPollenSugg={showPollenSugg}
+                setShowSeedSugg={setShowSeedSugg} setShowPollenSugg={setShowPollenSugg}
+                pollenLots={pollenLots}
+                onCancel={() => setCreating(false)}
+                onSubmit={createLot}
+              />
+            ) : null}
+
+            {couples.length === 0 ? (
+              <EmptyState icon={<Flower2 className="size-8" />} title="Aucun croisement" description="Commencez par enregistrer un croisement entre deux rosiers parents." />
+            ) : (
+              <div className="grid gap-2">
+                {couples.map(([key, couple]) => (
+                  <button
+                    key={key}
+                    onClick={() => setFocusedKey(key)}
+                    className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted/30"
+                  >
+                    <span className="flex size-10 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary"><Flower2 className="size-5" /></span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-foreground">{couple.seedParent} <span className="text-muted-foreground">×</span> {couple.pollenParent}</p>
+                      <p className="text-xs text-muted-foreground">{couple.lots.length} lot{couple.lots.length > 1 ? "s" : ""}</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </>
+        )
       ) : (
         <PollenPanel pollenLots={pollenLots} onRefresh={fetchData} />
       )}
     </div>
   )
 }
-function CrossEditRow({ cross, onSave, onCancel }: { cross: Cross; onSave: (changes: Partial<Cross>) => void; onCancel: () => void }) {
-  const [seedParent, setSeedParent] = useState(cross.seed_parent ?? "")
-  const [pollenParent, setPollenParent] = useState(cross.pollen_parent ?? "")
-  const [pollinationDate, setPollinationDate] = useState(toDateInput(cross.pollination_date))
-  const [remarks, setRemarks] = useState(cross.remarks ?? "")
-  const [status, setStatus] = useState(cross.status ?? "En cours")
-  const [abortCause, setAbortCause] = useState(cross.abort_cause ?? "")
-  const [totalSeeds, setTotalSeeds] = useState(String(cross.total_seeds ?? 0))
-  const [germinatedSeeds, setGerminatedSeeds] = useState(String(cross.germinated_seeds ?? 0))
-  const [failedSeeds, setFailedSeeds] = useState(String(cross.failed_seeds ?? 0))
-  const [failureAttribution, setFailureAttribution] = useState(cross.failure_attribution ?? "")
-  const [freeNotes, setFreeNotes] = useState(cross.free_notes ?? "")
-  const [pollinatedFlowersCount, setPollinatedFlowersCount] = useState(String(cross.pollinated_flowers_count ?? 1))
 
+// ---------------------------------------------------------------------------
+// Champs à édition inline : un clic affiche un input, Entrée valide.
+// ---------------------------------------------------------------------------
+
+function InlineText({ value, placeholder, onSave, textClassName }: { value: string; placeholder: string; onSave: (v: string) => void; textClassName?: string }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(value)
+  useEffect(() => { if (!editing) setDraft(value) }, [value, editing])
+
+  if (editing) {
+    return (
+      <Input
+        autoFocus
+        value={draft}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); if (draft !== value) onSave(draft) }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.currentTarget.blur() }
+          if (e.key === "Escape") { setDraft(value); setEditing(false) }
+        }}
+        className="h-7 px-2 text-xs"
+      />
+    )
+  }
   return (
-    <div className="grid gap-3">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="Parent porte-graine (♀)">
-          <Input value={seedParent} onChange={(e) => setSeedParent(e.target.value)} />
-        </Field>
-        <Field label="Parent pollen (♂)">
-          <Input value={pollenParent} onChange={(e) => setPollenParent(e.target.value)} />
-        </Field>
-        <Field label="Date de pollinisation">
-          <Input type="date" value={pollinationDate} onChange={(e) => setPollinationDate(e.target.value)} />
-        </Field>
-        <Field label="Statut">
-          <Select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="En cours">En cours</option>
-            <option value="Récolté">Récolté</option>
-            <option value="Avorté">Avorté</option>
-          </Select>
-        </Field>
-      </div>
+    <span onClick={(e) => { e.stopPropagation(); setEditing(true) }} className={textClassName ?? "cursor-text text-xs text-foreground hover:underline decoration-dotted"}>
+      {value || <span className="italic text-muted-foreground">{placeholder}</span>}
+    </span>
+  )
+}
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="Fleurs pollinisées">
-          <Input type="number" min={1} value={pollinatedFlowersCount} onChange={(e) => setPollinatedFlowersCount(e.target.value)} />
-        </Field>
-        {status === "Avorté" ? (
-          <Field label="Cause d'avortement">
-            <Input value={abortCause} onChange={(e) => setAbortCause(e.target.value)} placeholder="Ex: Coulure, gel..." />
-          </Field>
-        ) : null}
-        {status === "R��colté" ? (
+function InlineDate({ value, onSave, textClassName }: { value: string | null; onSave: (v: string) => void; textClassName?: string }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(toDateInput(value))
+  useEffect(() => { if (!editing) setDraft(toDateInput(value)) }, [value, editing])
+
+  if (editing) {
+    return (
+      <Input
+        autoFocus type="date"
+        value={draft}
+        onClick={(e) => e.stopPropagation()}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => { setEditing(false); onSave(fromDateInput(draft)) }}
+        onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setEditing(false) }}
+        className="h-7 w-36 px-2 text-xs"
+      />
+    )
+  }
+  return (
+    <span onClick={(e) => { e.stopPropagation(); setEditing(true) }} className={textClassName ?? "cursor-text text-xs text-foreground hover:underline decoration-dotted"}>
+      {formatDate(value)}
+    </span>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Formulaire de lot — allégé : en ajout de lot sur un couple existant, les
+// champs de parents disparaissent complètement (plus de doublon de saisie).
+// ---------------------------------------------------------------------------
+
+function LotForm({
+  form, setForm, lockParents, seedSuggestions, pollenSuggestions, showSeedSugg, showPollenSugg,
+  setShowSeedSugg, setShowPollenSugg, pollenLots, onCancel, onSubmit,
+}: {
+  form: any; setForm: (updater: any) => void; lockParents: boolean
+  seedSuggestions: VarietySuggestion[]; pollenSuggestions: VarietySuggestion[]
+  showSeedSugg: boolean; showPollenSugg: boolean
+  setShowSeedSugg: (v: boolean) => void; setShowPollenSugg: (v: boolean) => void
+  pollenLots: PollenLot[]; onCancel: () => void; onSubmit: () => void
+}) {
+  return (
+    <Card className="p-4">
+      {lockParents ? (
+        <p className="mb-3 text-sm font-medium text-foreground">{form.seedParent} <span className="text-muted-foreground">×</span> {form.pollenParent}</p>
+      ) : null}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {!lockParents ? (
           <>
-            <Field label="Graines totales">
-              <Input type="number" value={totalSeeds} onChange={(e) => setTotalSeeds(e.target.value)} />
-            </Field>
-            <Field label="Graines germées (Levée)">
-              <Input type="number" value={germinatedSeeds} onChange={(e) => setGerminatedSeeds(e.target.value)} />
-            </Field>
-            <Field label="Graines non-levées">
-              <Input type="number" value={failedSeeds} onChange={(e) => setFailedSeeds(e.target.value)} />
-            </Field>
-            <Field label="Imputabilité échec">
-              <Select value={failureAttribution} onChange={(e) => setFailureAttribution(e.target.value)}>
-                <option value="">-- Non défini --</option>
-                <option value="Pollen">Pollen (Père)</option>
-                <option value="Mère">Mère</option>
-                <option value="Climat">Climat</option>
-                <option value="Incompatibilité">Incompatibilité</option>
-                <option value="Non déterminé">Non déterminé</option>
-              </Select>
-            </Field>
+            <div className="relative">
+              <Field label="Parent porte-graine (♀)">
+                <Input value={form.seedParent} onChange={(e) => setForm({ ...form, seedParent: e.target.value, seedParentId: "" })} onFocus={() => { if (seedSuggestions.length > 0) setShowSeedSugg(true) }} placeholder="Ex: Grande Amore..." />
+              </Field>
+              {showSeedSugg && seedSuggestions.length > 0 ? (
+                <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
+                  {seedSuggestions.map((s) => (
+                    <div key={s.id} className="cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground" onClick={() => { setForm({ ...form, seedParent: s.name, seedParentId: s.id }); setShowSeedSugg(false) }}>
+                      <span className="font-medium text-foreground">{s.name}</span>
+                      {s.commercial_name && s.commercial_name !== s.name ? <span className="text-muted-foreground"> ({s.commercial_name})</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+            <div className="relative">
+              <Field label="Parent pollen (♂)">
+                <Input value={form.pollenParent} onChange={(e) => setForm({ ...form, pollenParent: e.target.value, pollenParentId: "" })} onFocus={() => { if (pollenSuggestions.length > 0) setShowPollenSugg(true) }} placeholder="Ex: Black Baccara..." />
+              </Field>
+              {showPollenSugg && pollenSuggestions.length > 0 ? (
+                <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
+                  {pollenSuggestions.map((s) => (
+                    <div key={s.id} className="cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground" onClick={() => { setForm({ ...form, pollenParent: s.name, pollenParentId: s.id }); setShowPollenSugg(false) }}>
+                      <span className="font-medium text-foreground">{s.name}</span>
+                      {s.commercial_name && s.commercial_name !== s.name ? <span className="text-muted-foreground"> ({s.commercial_name})</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </>
         ) : null}
+
+        <Field label="Date de pollinisation"><Input type="date" value={form.pollinationDate} onChange={(e) => setForm({ ...form, pollinationDate: e.target.value })} /></Field>
+        <Field label="Emplacement" hint="Serre, jardin, pleine terre..."><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Ex: Serre 1" /></Field>
+        <Field label="Contenants"><Input value={form.containers} onChange={(e) => setForm({ ...form, containers: e.target.value })} placeholder="Ex: Pots 3L" /></Field>
+        <Field label="Nombre de fleurs pollinisées" hint="Laissez vide pour le renseigner plus tard"><Input type="number" min={1} value={form.pollinatedFlowersCount} onChange={(e) => setForm({ ...form, pollinatedFlowersCount: e.target.value })} /></Field>
+
+        <Field label="Type de pollen">
+          <Select value={form.pollenType} onChange={(e) => setForm({ ...form, pollenType: e.target.value })}>
+            <option value="frais">Pollen frais (utilisation directe)</option>
+            <option value="conservé">Lot de pollen conservé (stock)</option>
+          </Select>
+        </Field>
+        {form.pollenType === "conservé" ? (
+          <Field label="Lot de pollen conservé">
+            <Select value={form.pollenLotId} onChange={(e) => setForm({ ...form, pollenLotId: e.target.value })}>
+              <option value="">-- Sélectionner --</option>
+              {pollenLots.map((pl) => <option key={pl.id} value={pl.id}>Lot #{pl.lot_number} ({pl.rose_name ?? "Inconnu"})</option>)}
+            </Select>
+          </Field>
+        ) : null}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <Field label="Remarques techniques">
-          <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-        </Field>
-        <Field label="Notes libres / Observations">
-          <Input value={freeNotes} onChange={(e) => setFreeNotes(e.target.value)} />
-        </Field>
+      {form.pollenType === "conservé" && form.pollenLotId ? (() => {
+        const usedLot = pollenLots.find((pl) => pl.id === form.pollenLotId)
+        return usedLot ? (
+          <div className="mt-3 rounded-md bg-primary/5 p-3">
+            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Lot utilisé</p>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              <Badge tone="primary">Lot #{usedLot.lot_number} — {usedLot.rose_name ?? "Inconnu"}</Badge>
+              {usedLot.anther_quality ? <Badge tone="neutral">Anthères: {ANTHER_QUALITY_LABELS[usedLot.anther_quality] ?? usedLot.anther_quality}</Badge> : null}
+              {usedLot.dehiscence ? <Badge tone="neutral">Déhiscence: {DEHISCENCE_LABELS[usedLot.dehiscence] ?? usedLot.dehiscence}</Badge> : null}
+              {usedLot.conservation_mode ? <Badge tone="neutral">Stockage: {CONSERVATION_LABELS[usedLot.conservation_mode] ?? usedLot.conservation_mode}</Badge> : null}
+            </div>
+          </div>
+        ) : null
+      })() : null}
+
+      {form.pollenType === "frais" ? (
+        <div className="mt-3 grid gap-3 rounded-md bg-primary/5 p-3 sm:grid-cols-2">
+          <p className="col-span-full -mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Observation du pollen frais du jour (obligatoire — mêmes cases que le module Pollen, hors stockage)
+          </p>
+          <Field label="Qualité des anthères">
+            <Select value={form.freshAntherQuality} onChange={(e) => setForm({ ...form, freshAntherQuality: e.target.value })}>
+              <option value="">-- Sélectionner --</option>
+              {Object.entries(ANTHER_QUALITY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </Select>
+          </Field>
+          <Field label="Déhiscence">
+            <Select value={form.freshDehiscence} onChange={(e) => setForm({ ...form, freshDehiscence: e.target.value })}>
+              <option value="">-- Sélectionner --</option>
+              {Object.entries(DEHISCENCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            </Select>
+          </Field>
+        </div>
+      ) : null}
+
+      <div className="mt-3 grid gap-3 rounded-md bg-muted/20 p-3 sm:grid-cols-3 lg:grid-cols-5">
+        <p className="col-span-full -mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Météo du jour (relevé manuel, en complément de l'historique)</p>
+        <Field label="Température (°C)"><Input type="number" value={form.temperature} onChange={(e) => setForm({ ...form, temperature: e.target.value })} /></Field>
+        <Field label="Humidité (%)"><Input type="number" value={form.humidity} onChange={(e) => setForm({ ...form, humidity: e.target.value })} /></Field>
+        <Field label="Vent (km/h)"><Input type="number" value={form.wind} onChange={(e) => setForm({ ...form, wind: e.target.value })} /></Field>
+        <Field label="Précipitations (mm)"><Input type="number" value={form.precipitation} onChange={(e) => setForm({ ...form, precipitation: e.target.value })} /></Field>
+        <Field label="Ensoleillement (h)"><Input type="number" value={form.sunshine} onChange={(e) => setForm({ ...form, sunshine: e.target.value })} /></Field>
       </div>
 
-      <div className="flex justify-end gap-2 pt-2">
-        <Button variant="ghost" size="sm" onClick={onCancel} className="gap-1">
-          <X className="size-3.5" /> Annuler
-        </Button>
-        <Button
-          size="sm"
-          onClick={() =>
-            onSave({
-              seed_parent: seedParent,
-              pollen_parent: pollenParent,
-              pollination_date: fromDateInput(pollinationDate),
-              remarks,
-              status,
-              abort_cause: status === "Avorté" ? abortCause : null,
-              total_seeds: status === "Récolté" ? parseInt(totalSeeds, 10) || 0 : null,
-              germinated_seeds: status === "Récolté" ? parseInt(germinatedSeeds, 10) || 0 : null,
-              failed_seeds: status === "Récolté" ? parseInt(failedSeeds, 10) || 0 : null,
-              failure_attribution: status === "Récolté" ? failureAttribution || null : null,
-              free_notes: freeNotes,
-              pollinated_flowers_count: parseInt(pollinatedFlowersCount, 10) || 1,
-            })
-          }
-          className="gap-1"
-        >
-          <Check className="size-3.5" /> Enregistrer
+      <div className="mt-4 flex justify-end gap-2">
+        <Button variant="ghost" onClick={onCancel}>Annuler</Button>
+        <Button onClick={onSubmit} disabled={!lockParents && !form.seedParent.trim() && !form.pollenParent.trim()}>
+          {lockParents ? "Créer le lot" : "Créer"}
         </Button>
       </div>
+    </Card>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Vue Focus d'un couple : occupe tout l'écran, retour explicite.
+// ---------------------------------------------------------------------------
+
+function CoupleFocusView({
+  coupleKey, couple, focusedLot, setFocusedLot, fruitsByLot, seedsByFruit, treatmentsByCross,
+  greenhouses, tables, creatingLot, lotForm, setLotForm, pollenLots,
+  onBack, onStartAddLot, onCancelAddLot, onSubmitLot, onPatchLot, onDeleteLot,
+  onValidateFlowerCount, onHarvestFruit, onAbortFruit, onAddPhenologyObservation,
+}: any) {
+  const allTreatments: Treatment[] = couple.lots.flatMap((lot: Cross) => treatmentsByCross.get(lot.id) ?? [])
+  const focusedLotData = focusedLot ? couple.lots.find((l: Cross) => l.id === focusedLot) : null
+
+  return (
+    <div className="flex flex-col gap-4">
+      <button onClick={onBack} className="flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" /> Retour aux croisements
+      </button>
+
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="font-serif text-xl text-foreground">{couple.seedParent} <span className="text-muted-foreground">×</span> {couple.pollenParent}</h2>
+          <p className="text-xs text-muted-foreground">{couple.lots.length} lot{couple.lots.length > 1 ? "s" : ""}</p>
+        </div>
+        <Button size="sm" onClick={onStartAddLot} className="size-8 rounded-full p-0" title="Ajouter un lot">
+          <Plus className="size-4" />
+        </Button>
+      </div>
+
+      {allTreatments.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted/20 p-2">
+          <Shield className="size-3.5 text-muted-foreground" />
+          <span className="text-xs text-muted-foreground">Suivi sanitaire (Parcelle) :</span>
+          {allTreatments.slice(0, 6).map((t) => (
+            <Badge key={t.id} tone="neutral">{t.product_name}{t.treatment_type ? ` · ${TREATMENT_TYPE_LABELS[t.treatment_type] ?? t.treatment_type}` : ""}</Badge>
+          ))}
+        </div>
+      ) : null}
+
+      {creatingLot ? (
+        <LotForm
+          form={lotForm} setForm={setLotForm} lockParents
+          seedSuggestions={[]} pollenSuggestions={[]} showSeedSugg={false} showPollenSugg={false}
+          setShowSeedSugg={() => {}} setShowPollenSugg={() => {}}
+          pollenLots={pollenLots} onCancel={onCancelAddLot} onSubmit={onSubmitLot}
+        />
+      ) : null}
+
+      {focusedLotData ? (
+        <LotFocusView
+          lot={focusedLotData}
+          fruits={fruitsByLot.get(focusedLotData.id) ?? []}
+          seedsByFruit={seedsByFruit}
+          treatments={treatmentsByCross.get(focusedLotData.id) ?? []}
+          greenhouses={greenhouses}
+          tables={tables}
+          pollenLots={pollenLots}
+          onBack={() => setFocusedLot(null)}
+          onPatch={(changes: Partial<Cross>) => onPatchLot(focusedLotData, changes)}
+          onDelete={() => { onDeleteLot(focusedLotData.id); setFocusedLot(null) }}
+          onValidateFlowerCount={(count: number) => onValidateFlowerCount(focusedLotData, count)}
+          onHarvestFruit={onHarvestFruit}
+          onAbortFruit={onAbortFruit}
+          onAddPhenologyObservation={onAddPhenologyObservation}
+        />
+      ) : (
+        <div className="grid gap-2">
+          {couple.lots.map((lot: Cross) => {
+            const lotFruits = fruitsByLot.get(lot.id) ?? []
+            return (
+              <button key={lot.id} onClick={() => setFocusedLot(lot.id)} className="flex w-full items-center gap-3 rounded-lg border border-border bg-card p-3 text-left hover:border-primary/40 hover:bg-muted/30">
+                <span className="font-serif text-lg text-primary">{lot.lot_letter}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-foreground">Pollinisé le {formatDate(lot.pollination_date)}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {lot.location ? `${lot.location} · ` : ""}
+                    {lot.flower_count == null ? "Fleurs pollinisées non renseignées" : `${lot.flower_count} fruit${lot.flower_count > 1 ? "s" : ""}`}
+                  </p>
+                </div>
+                {lot.pollen_type === "conservé" ? <Badge tone="primary">Pollen conservé</Badge> : <Badge tone="neutral">Pollen frais</Badge>}
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
 
-function HarvestRow({ harvest, onUpdate, onDelete }: { harvest: HipHarvest; onUpdate: (changes: Partial<HipHarvest>) => void; onDelete: () => void }) {
-  const [editing, setEditing] = useState(false)
-  const [seedCount, setSeedCount] = useState(String(harvest.seed_count ?? 0))
-  const [harvestDate, setHarvestDate] = useState(toDateInput(harvest.harvest_date))
-  const [fruitCalibre, setFruitCalibre] = useState(harvest.fruit_calibre ?? "")
-  const [maturation, setMaturation] = useState(harvest.maturation ?? "")
-  const [avortementCause, setAvortementCause] = useState(harvest.avortement_cause ?? "")
-  const [seedExtraction, setSeedExtraction] = useState(harvest.seed_extraction ?? "")
-  const [remarks, setRemarks] = useState(harvest.remarks ?? "")
+function LotFocusView({
+  lot, fruits, seedsByFruit, treatments, greenhouses, tables, pollenLots,
+  onBack, onPatch, onDelete, onValidateFlowerCount, onHarvestFruit, onAbortFruit, onAddPhenologyObservation,
+}: any) {
+  const [flowerInput, setFlowerInput] = useState("")
+  const [focusedFruit, setFocusedFruit] = useState<CrossFruit | null>(null)
+  const climate = (lot.climate_data ?? {}) as Record<string, any>
+  const pollenQuality = (lot.pollen_quality ?? {}) as Record<string, any>
+  const usedPollenLot = lot.pollen_type === "conservé" ? (pollenLots as PollenLot[])?.find((pl) => pl.id === lot.pollen_lot_id) : null
 
-  if (!editing) {
+  if (focusedFruit) {
+    const current = fruits.find((f: CrossFruit) => f.id === focusedFruit.id) ?? focusedFruit
     return (
-      <div className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-muted/20 px-3 py-2 text-xs">
-        <div className="flex items-center gap-3">
-          <span className="font-medium text-foreground">Récolte {harvest.code}</span>
-          <span className="text-muted-foreground">Date: {formatDate(harvest.harvest_date)}</span>
-          <span className="text-muted-foreground">• Graines: {harvest.seed_count}</span>
-          {harvest.fruit_calibre ? <Badge tone="neutral">Calibre: {FRUIT_CALIBRE_LABELS[harvest.fruit_calibre] ?? harvest.fruit_calibre}</Badge> : null}
-          {harvest.maturation ? <Badge tone="neutral">Maturation: {MATURATION_LABELS[harvest.maturation] ?? harvest.maturation}</Badge> : null}
-          {harvest.seed_extraction ? <Badge tone="neutral">Extraction: {SEED_EXTRACTION_LABELS[harvest.seed_extraction] ?? harvest.seed_extraction}</Badge> : null}
-        </div>
-        <div className="flex items-center gap-1">
-          <Button variant="ghost" size="sm" onClick={() => setEditing(true)} className="h-7 text-xs">Éditer</Button>
-          <Button variant="destructive" size="sm" onClick={onDelete} className="h-7 px-2"><Trash2 className="size-3" /></Button>
-        </div>
-      </div>
+      <FruitFocusView
+        fruit={current}
+        seeds={seedsByFruit.get(current.id) ?? []}
+        greenhouses={greenhouses}
+        tables={tables}
+        onBack={() => setFocusedFruit(null)}
+        onHarvest={(values: any) => onHarvestFruit(current, values)}
+        onAbort={(causes: string[]) => onAbortFruit(current, causes)}
+        onAddObservation={(obs: PhenologyObservation) => onAddPhenologyObservation(current, obs)}
+      />
     )
   }
 
   return (
-    <div className="grid gap-3 rounded-md border border-border bg-background p-3 text-xs">
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Field label="Date de récolte">
-          <Input type="date" value={harvestDate} onChange={(e) => setHarvestDate(e.target.value)} />
-        </Field>
-        <Field label="Nombre de graines">
-          <Input type="number" value={seedCount} onChange={(e) => setSeedCount(e.target.value)} />
-        </Field>
-        <Field label="Calibre du fruit">
-          <Select value={fruitCalibre} onChange={(e) => setFruitCalibre(e.target.value)}>
-            <option value="">-- Sélectionner --</option>
-            {Object.entries(FRUIT_CALIBRE_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Niveau de maturation">
-          <Select value={maturation} onChange={(e) => setMaturation(e.target.value)}>
-            <option value="">-- Sélectionner --</option>
-            {Object.entries(MATURATION_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </Select>
-        </Field>
-      </div>
+    <div className="flex flex-col gap-4">
+      <button onClick={onBack} className="flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" /> Retour au croisement
+      </button>
 
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        <Field label="Cause d'avortement (interne)">
-          <Select value={avortementCause} onChange={(e) => setAvortementCause(e.target.value)}>
-            <option value="">-- Sélectionner --</option>
-            {Object.entries(AVORTEMENT_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Extraction des graines">
-          <Select value={seedExtraction} onChange={(e) => setSeedExtraction(e.target.value)}>
-            <option value="">-- Sélectionner --</option>
-            {Object.entries(SEED_EXTRACTION_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
-          </Select>
-        </Field>
-        <Field label="Remarques récolte">
-          <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-        </Field>
-      </div>
+      <Card className="p-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="font-serif text-lg text-primary">Lot {lot.lot_letter}</span>
+          <span className="text-xs text-muted-foreground">Pollinisé le</span>
+          <InlineDate value={lot.pollination_date} onSave={(v) => onPatch({ pollination_date: v })} />
+          <span className="text-xs text-muted-foreground">·</span>
+          <InlineText value={lot.location ?? ""} placeholder="emplacement" onSave={(v) => onPatch({ location: v })} />
+          <span className="text-xs text-muted-foreground">·</span>
+          <InlineText value={lot.containers ?? ""} placeholder="contenants" onSave={(v) => onPatch({ containers: v })} />
+          <Badge tone={lot.pollen_type === "conservé" ? "primary" : "neutral"}>{lot.pollen_type === "conservé" ? "Pollen conservé" : "Pollen frais"}</Badge>
+          <button onClick={onDelete} className="ml-auto text-muted-foreground hover:text-destructive" title="Supprimer le lot">
+            <Trash2 className="size-4" />
+          </button>
+        </div>
+        <div className="mt-2">
+          <InlineText value={lot.remarks ?? ""} placeholder="Remarques..." onSave={(v) => onPatch({ remarks: v })} textClassName="cursor-text text-xs text-muted-foreground italic hover:underline decoration-dotted" />
+        </div>
+        {Object.keys(climate).length > 0 ? (
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            {climate.temperature_observed != null || climate.temperature_mean != null ? <Badge tone="neutral">{climate.temperature_observed ?? climate.temperature_mean}°C</Badge> : null}
+            {climate.humidity_observed != null || climate.humidity_mean != null ? <Badge tone="neutral">{climate.humidity_observed ?? climate.humidity_mean}% hum.</Badge> : null}
+            {climate.wind_observed != null || climate.wind_max != null ? <Badge tone="neutral">{climate.wind_observed ?? climate.wind_max} km/h</Badge> : null}
+            {climate.precipitation_observed != null || climate.precipitation_sum != null ? <Badge tone="neutral">{climate.precipitation_observed ?? climate.precipitation_sum} mm</Badge> : null}
+            {climate.mode ? <Badge tone="neutral">{climate.mode === "temps_reel" ? "Météo temps réel" : "Météo historique"}</Badge> : null}
+          </div>
+        ) : null}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <FlaskConical className="size-3.5 text-muted-foreground" />
+          {lot.pollen_type === "conservé" ? (
+            usedPollenLot ? (
+              <>
+                <Badge tone="primary">Lot #{usedPollenLot.lot_number} — {usedPollenLot.rose_name ?? "Inconnu"}</Badge>
+                {usedPollenLot.anther_quality ? <Badge tone="neutral">Anthères: {ANTHER_QUALITY_LABELS[usedPollenLot.anther_quality] ?? usedPollenLot.anther_quality}</Badge> : null}
+                {usedPollenLot.dehiscence ? <Badge tone="neutral">Déhiscence: {DEHISCENCE_LABELS[usedPollenLot.dehiscence] ?? usedPollenLot.dehiscence}</Badge> : null}
+              </>
+            ) : <Badge tone="neutral">Pollen conservé (lot non retrouvé)</Badge>
+          ) : (
+            <>
+              <Badge tone="neutral">Pollen frais</Badge>
+              {pollenQuality.anther_quality ? <Badge tone="neutral">Anthères: {ANTHER_QUALITY_LABELS[pollenQuality.anther_quality] ?? pollenQuality.anther_quality}</Badge> : null}
+              {pollenQuality.dehiscence ? <Badge tone="neutral">Déhiscence: {DEHISCENCE_LABELS[pollenQuality.dehiscence] ?? pollenQuality.dehiscence}</Badge> : null}
+            </>
+          )}
+        </div>
+        {treatments.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <Shield className="size-3.5 text-muted-foreground" />
+            {treatments.map((t: Treatment) => <Badge key={t.id} tone="neutral">{t.product_name}</Badge>)}
+          </div>
+        ) : null}
+      </Card>
 
-      <div className="flex justify-end gap-2 pt-1">
-        <Button variant="ghost" size="sm" onClick={() => setEditing(false)}>Annuler</Button>
-        <Button
-          size="sm"
-          onClick={() => {
-            onUpdate({
-              harvest_date: fromDateInput(harvestDate),
-              seed_count: parseInt(seedCount, 10) || 0,
-              fruit_calibre: fruitCalibre || null,
-              maturation: maturation || null,
-              avortement_cause: avortementCause || null,
-              seed_extraction: seedExtraction || null,
-              remarks,
-            })
-            setEditing(false)
-          }}
-        >
-          Enregistrer
-        </Button>
-      </div>
+      {lot.flower_count == null ? (
+        <Card className="flex flex-wrap items-end gap-3 p-3">
+          <Field label="Fleurs pollinisées" hint="Génère aussitôt les fruits a, b, c...">
+            <Input className="w-36" type="number" min={1} value={flowerInput} onChange={(e) => setFlowerInput(e.target.value)} />
+          </Field>
+          <Button size="sm" disabled={!flowerInput.trim()} onClick={() => onValidateFlowerCount(Math.max(1, Number.parseInt(flowerInput, 10) || 0))}>
+            Valider le nombre de fleurs
+          </Button>
+        </Card>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {fruits.map((fruit: CrossFruit) => {
+            const fruitSeeds = seedsByFruit.get(fruit.id) ?? []
+            const tone = fruit.status === "récolté" ? "success" : fruit.status === "avorté" ? "danger" : fruit.status === "vide" ? "warning" : "neutral"
+            const observationsCount = fruit.checklist?.observations?.length ?? 0
+            return (
+              <button key={fruit.id} onClick={() => setFocusedFruit(fruit)} className="flex flex-col gap-1.5 rounded-lg border border-border bg-card p-3 text-left hover:border-primary/40 hover:bg-muted/30">
+                <div className="flex items-center gap-2">
+                  <Cherry className="size-4 text-primary" />
+                  <span className="text-sm font-medium">{fruit.fruit_name}</span>
+                  <Badge tone={tone} className="ml-auto">{fruit.status}</Badge>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {fruit.status === "récolté" ? `${fruitSeeds.length} graine${fruitSeeds.length > 1 ? "s" : ""}` : observationsCount > 0 ? `${observationsCount} observation${observationsCount > 1 ? "s" : ""} de nouaison` : "Aucune observation pour l'instant"}
+                </p>
+              </button>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }
 
-function FruitsPanel({ fruits, crosses, onRefresh }: { fruits: CrossFruit[]; crosses: Cross[]; onRefresh: () => void }) {
-  const [editing, setEditing] = useState<string | null>(null)
+// ---------------------------------------------------------------------------
+// Carte Fruit (focus) : grille d'observation de la nouaison en premier ;
+// la récolte finale et l'échec restent accessibles, mais ne sont jamais
+// affichés en premier ni forcés.
+// ---------------------------------------------------------------------------
+
+function FruitFocusView({ fruit, seeds, greenhouses, tables, onBack, onHarvest, onAbort, onAddObservation }: any) {
+  const [obsDate, setObsDate] = useState(new Date().toISOString().split("T")[0])
+  const [obsStages, setObsStages] = useState<string[]>([])
+  const [obsCalibre, setObsCalibre] = useState("")
+  const [obsCouleur, setObsCouleur] = useState("")
+  const [obsComportement, setObsComportement] = useState<string[]>([])
+  const [obsRemarque, setObsRemarque] = useState("")
+  const [closingVoie, setClosingVoie] = useState<"A" | "B" | null>(null)
+
   const [seedCount, setSeedCount] = useState("0")
-  const [checklist, setChecklist] = useState<Record<string, boolean>>({})
-  const [seeds, setSeeds] = useState<HarvestedSeed[]>([])
-  const [greenhouses, setGreenhouses] = useState<Array<{ id: string; name: string }>>([])
-  const [tables, setTables] = useState<Array<{ id: string; greenhouse_id: string; name: string }>>([])
+  const [harvestDate, setHarvestDate] = useState(new Date().toISOString().split("T")[0])
+  const [fruitCalibre, setFruitCalibre] = useState("")
+  const [maturation, setMaturation] = useState("")
+  const [seedExtraction, setSeedExtraction] = useState("")
   const [greenhouseId, setGreenhouseId] = useState("")
   const [tableId, setTableId] = useState("")
+  const [causes, setCauses] = useState<string[]>([])
 
-  useEffect(() => {
-    Promise.all([
-      supabase.from("harvested_seeds").select("*").order("seed_name"),
-      supabase.from("greenhouses").select("id,name").order("name"),
-      supabase.from("greenhouse_tables").select("id,greenhouse_id,name").order("name"),
-    ]).then(([seedResult, greenhouseResult, tableResult]) => {
-      if (seedResult.data) setSeeds(seedResult.data as HarvestedSeed[])
-      if (greenhouseResult.data) setGreenhouses(greenhouseResult.data)
-      if (tableResult.data) setTables(tableResult.data)
-    })
-  }, [fruits.length])
+  const closed = fruit.status !== "suivi"
+  const observations: PhenologyObservation[] = fruit.checklist?.observations ?? []
 
-  async function saveFruit(fruit: CrossFruit) {
-    const count = Math.max(0, Number.parseInt(seedCount, 10) || 0)
-    const { data: userData } = await supabase.auth.getUser()
-    if (!userData.user) return
-    const { error } = await supabase.from("cross_fruits").update({
-      seed_count: count,
-      checklist,
-      status: count > 0 ? "récolté" : fruit.status,
-    }).eq("id", fruit.id)
-    if (error) {
-      alert(`Erreur : ${error.message}`)
-      return
-    }
-    const harvestYear = new Date().getFullYear()
-    await supabase
-      .from("harvested_seeds")
-      .delete()
-      .eq("fruit_id", fruit.id)
-      .gt("seed_number", count)
-
-    if (count > 0) {
-      const { data: savedSeeds, error: seedError } = await supabase.from("harvested_seeds").upsert(
-        Array.from({ length: count }, (_, index) => ({
-          user_id: userData.user.id,
-          fruit_id: fruit.id,
-          cross_id: fruit.cross_id,
-          seed_name: `${fruit.fruit_name.replace(/-+$/, "")}-${harvestYear}-${index + 1}`,
-          seed_number: index + 1,
-          harvest_year: harvestYear,
-          status: "à semer",
-        })),
-        { onConflict: "fruit_id,seed_number" },
-      ).select("id")
-      if (seedError) {
-        alert(`Erreur lors de la création des graines : ${seedError.message}`)
-        return
-      }
-      if (greenhouseId && tableId && savedSeeds?.length) {
-        await supabase.from("harvested_seeds").update({
-        greenhouse_id: greenhouseId,
-        greenhouse_table_id: tableId,
-        status: "plantee",
-      }).in("id", savedSeeds.map((seed) => seed.id))
-      }
-    }
-    setEditing(null)
-    onRefresh()
+  function submitObservation() {
+    if (obsStages.length === 0 && !obsCalibre && !obsCouleur && obsComportement.length === 0 && !obsRemarque) return
+    onAddObservation({ date: obsDate, stages: obsStages, calibre: obsCalibre, couleur: obsCouleur, comportement: obsComportement, remarque: obsRemarque })
+    setObsStages([]); setObsCalibre(""); setObsCouleur(""); setObsComportement([]); setObsRemarque("")
   }
 
   return (
-    <Card className="p-4">
-      <SectionHeading title="Suivi des fruits" description="Enregistrez la récolte de chaque fruit pour générer automatiquement les graines à semer." />
-      {fruits.length === 0 ? <EmptyState icon={<Cherry className="size-8" />} title="Aucun fruit" description="Les fruits apparaîtront automatiquement après la création d’un croisement." /> : (
-        <div className="mt-4 grid gap-2">
-          {fruits.map((fruit) => {
-            const cross = crosses.find((item) => item.id === fruit.cross_id)
-            const isEditing = editing === fruit.id
-            return <div key={fruit.id} className="flex flex-wrap items-center gap-3 rounded-md border border-border p-3 text-sm">
-              <Cherry className="size-4 text-primary" />
-              <span className="font-medium">{fruit.fruit_name}</span>
-              <span className="text-xs text-muted-foreground">{cross?.seed_parent ?? "?"} × {cross?.pollen_parent ?? "?"}</span>
-              <Badge tone={fruit.status === "récolté" ? "success" : "warning"}>{fruit.status}</Badge>
-              <span className="text-xs text-muted-foreground">{fruit.seed_count} graine(s) générée(s)</span>
-              {seeds.filter((seed) => seed.fruit_id === fruit.id).length > 0 ? (
-                <div className="w-full rounded-md bg-muted/40 px-2.5 py-2 text-[11px] text-muted-foreground">
-                  {seeds.filter((seed) => seed.fruit_id === fruit.id).map((seed) => (
-                    <span key={seed.id} className="mr-2 inline-flex items-center gap-1">
-                      <span className="font-medium text-foreground">{seed.seed_name}</span>
-                      {seed.greenhouse_table_id ? " · semée" : " · à semer"}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              <div className="ml-auto flex items-center gap-2">
-                {isEditing ? <>
-                  <label className="sr-only" htmlFor={`seed-count-${fruit.id}`}>Nombre de graines récoltées pour {fruit.fruit_name}</label>
-                  <Input id={`seed-count-${fruit.id}`} className="w-24" type="number" min={0} value={seedCount} onChange={(event) => setSeedCount(event.target.value)} aria-label={`Nombre de graines pour ${fruit.fruit_name}`} />
-                  <Select value={greenhouseId} onChange={(event) => { setGreenhouseId(event.target.value); setTableId("") }} aria-label="Serre de plantation">
-                    <option value="">Serre</option>
-                    {greenhouses.map((greenhouse) => <option key={greenhouse.id} value={greenhouse.id}>{greenhouse.name}</option>)}
-                  </Select>
-                  <Select value={tableId} onChange={(event) => setTableId(event.target.value)} aria-label="Table de plantation">
-                    <option value="">Table</option>
-                    {tables.filter((table) => table.greenhouse_id === greenhouseId).map((table) => <option key={table.id} value={table.id}>{table.name}</option>)}
-                  </Select>
-                  <div className="grid w-full gap-2 rounded-md border border-border p-2 text-xs sm:grid-cols-3"><fieldset><legend className="mb-1 font-medium">Stades et dynamiques de la nouaison</legend><div className="grid gap-1">{[["vigoureux","Vigoureux / Croissance rapide"],["optimal","Développement optimal"],["retard","Retard de développement / Croissance lente"],["chetif","Chétif"],["stagnation","Stagnation / Évolution ralentie"]].map(([key, label]) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={Boolean(checklist[key])} onChange={(event) => setChecklist({ ...checklist, [key]: event.target.checked })} /> {label}</label>)}</div></fieldset><fieldset><legend className="mb-1 font-medium">Calibres</legend><div className="grid gap-1">{[["petit","Petit / Fin"],["moyen","Moyen / Standard"],["gros","Gros / Développé"]].map(([key, label]) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={Boolean(checklist[key])} onChange={(event) => setChecklist({ ...checklist, [key]: event.target.checked })} /> {label}</label>)}</div></fieldset><fieldset><legend className="mb-1 font-medium">Couleurs identifiées</legend><div className="grid gap-1">{[["rouge","Rouge"],["jaune","Jaune"],["orange","Orangé"]].map(([key, label]) => <label key={key} className="flex items-center gap-1"><input type="checkbox" checked={Boolean(checklist[key])} onChange={(event) => setChecklist({ ...checklist, [key]: event.target.checked })} /> {label}</label>)}</div></fieldset></div>
-                  <Button size="sm" onClick={() => saveFruit(fruit)}>Enregistrer</Button>
-                  <Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Annuler</Button>
-                </> : <Button size="sm" variant="outline" className="gap-1.5" onClick={() => { setEditing(fruit.id); setSeedCount(String(fruit.seed_count)); setChecklist(fruit.checklist ?? {}) }}>
-                    <Cherry className="size-3.5" /> Enregistrer la récolte
-                  </Button>}
+    <div className="flex flex-col gap-4">
+      <button onClick={onBack} className="flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" /> Retour au lot
+      </button>
+
+      <div className="flex items-center gap-3">
+        <span className="flex size-9 items-center justify-center rounded-md bg-primary/10 text-primary"><Cherry className="size-4" /></span>
+        <div>
+          <p className="font-serif text-lg text-foreground">{fruit.fruit_name}</p>
+          <p className="text-xs text-muted-foreground">Suivi de nouaison sur 4 à 5 mois, indépendant de la récolte</p>
+        </div>
+      </div>
+
+      {closed ? (
+        <Card className="flex flex-wrap gap-1.5 p-3">
+          {fruit.status === "récolté" || fruit.status === "vide" ? (
+            <>
+              <Badge tone={fruit.status === "récolté" ? "success" : "warning"}>{fruit.status === "récolté" ? "Récolté" : "Vide (0 graine)"}</Badge>
+              {fruit.harvest_date ? <Badge tone="neutral">Le {formatDate(fruit.harvest_date)}</Badge> : null}
+              {fruit.fruit_calibre ? <Badge tone="neutral">{FRUIT_CALIBRE_LABELS[fruit.fruit_calibre] ?? fruit.fruit_calibre}</Badge> : null}
+              {fruit.maturation ? <Badge tone="neutral">{MATURATION_LABELS[fruit.maturation] ?? fruit.maturation}</Badge> : null}
+              {fruit.seed_extraction ? <Badge tone="neutral">{SEED_EXTRACTION_LABELS[fruit.seed_extraction] ?? fruit.seed_extraction}</Badge> : null}
+            </>
+          ) : (
+            <>
+              <Badge tone="danger">Avorté</Badge>
+              {fruit.failure_causes.map((c: string) => <Badge key={c} tone="danger">{AVORTEMENT_LABELS[c] ?? c}</Badge>)}
+            </>
+          )}
+        </Card>
+      ) : null}
+
+      {seeds.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {seeds.map((s: HarvestedSeed) => <Badge key={s.id} tone="neutral"><Sprout className="size-3" /> {s.seed_name}{s.greenhouse_table_id ? " · en serre" : " · à semer"}</Badge>)}
+        </div>
+      ) : null}
+
+      <Card className="p-4">
+        <div className="mb-3 flex items-center gap-2">
+          <CalendarClock className="size-4 text-primary" />
+          <h3 className="text-sm font-medium text-foreground">Suivi de nouaison</h3>
+        </div>
+
+        {observations.length > 0 ? (
+          <div className="mb-4 grid gap-2">
+            {observations.map((obs, i) => (
+              <div key={i} className="rounded-md border border-border bg-muted/10 p-2 text-xs">
+                <p className="font-medium text-foreground">{formatDate(obs.date)}</p>
+                {obs.stages.length > 0 ? <p className="text-muted-foreground">{obs.stages.join(", ")}</p> : null}
+                {obs.calibre || obs.couleur ? <p className="text-muted-foreground">{[obs.calibre, obs.couleur].filter(Boolean).join(" · ")}</p> : null}
+                {obs.comportement?.length > 0 ? <p className="text-muted-foreground">{obs.comportement.join(", ")}</p> : null}
+                {obs.remarque ? <p className="italic text-muted-foreground">{obs.remarque}</p> : null}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="mb-4 text-xs text-muted-foreground">Aucune observation enregistrée pour l'instant.</p>
+        )}
+
+        {!closed ? (
+          <div className="grid gap-3 border-t border-border pt-3">
+            <Field label="Date de l'observation"><Input type="date" value={obsDate} onChange={(e) => setObsDate(e.target.value)} className="w-44" /></Field>
+
+            <div className="grid gap-1.5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Stades phénologiques observés</p>
+              <div className="flex flex-wrap gap-3 text-xs">
+                {PHENOLOGY_STAGES.map((stage) => (
+                  <label key={stage} className="flex items-center gap-1.5">
+                    <input type="checkbox" checked={obsStages.includes(stage)} onChange={(e) => setObsStages((cur) => e.target.checked ? [...cur, stage] : cur.filter((s) => s !== stage))} /> {stage}
+                  </label>
+                ))}
               </div>
             </div>
-          })}
-        </div>
-      )}
-    </Card>
+
+            <div className="grid gap-1.5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Calibre</p>
+              <div className="flex flex-wrap gap-3 text-xs">
+                {CALIBRE_STAGE_OPTIONS.map((opt) => (
+                  <label key={opt} className="flex items-center gap-1.5">
+                    <input type="radio" name="obs-calibre" checked={obsCalibre === opt} onChange={() => setObsCalibre(opt)} /> {opt}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-1.5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Couleur</p>
+              <div className="flex flex-wrap gap-3 text-xs">
+                {COLOR_OPTIONS.map((opt) => (
+                  <label key={opt} className="flex items-center gap-1.5">
+                    <input type="radio" name="obs-couleur" checked={obsCouleur === opt} onChange={() => setObsCouleur(opt)} /> {opt}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <div className="grid gap-1.5">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Comportement du fruit</p>
+              <div className="flex flex-wrap gap-3 text-xs">
+                {BEHAVIOR_OPTIONS.map((opt) => (
+                  <label key={opt} className="flex items-center gap-1.5">
+                    <input type="checkbox" checked={obsComportement.includes(opt)} onChange={(e) => setObsComportement((cur) => e.target.checked ? [...cur, opt] : cur.filter((c) => c !== opt))} /> {opt}
+                  </label>
+                ))}
+              </div>
+            </div>
+
+            <Field label="Remarque" hint="Seul champ en texte libre de tout le suivi"><Textarea value={obsRemarque} onChange={(e) => setObsRemarque(e.target.value)} placeholder="Remarque optionnelle..." /></Field>
+
+            <div className="flex justify-end">
+              <Button size="sm" onClick={submitObservation}>Ajouter au suivi</Button>
+            </div>
+          </div>
+        ) : null}
+      </Card>
+
+      {!closed ? (
+        closingVoie === null ? (
+          <div className="flex gap-2">
+            <Button variant="destructive" size="sm" className="gap-1.5" onClick={() => setClosingVoie("B")}><Ban className="size-3.5" /> Déclarer un échec</Button>
+            <Button size="sm" className="gap-1.5" onClick={() => setClosingVoie("A")}><Cherry className="size-3.5" /> Enregistrer la récolte finale</Button>
+          </div>
+        ) : closingVoie === "A" ? (
+          <Card className="grid gap-3 p-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <Field label="Date de récolte"><Input type="date" value={harvestDate} onChange={(e) => setHarvestDate(e.target.value)} /></Field>
+              <Field label="Nombre de graines"><Input type="number" min={0} value={seedCount} onChange={(e) => setSeedCount(e.target.value)} /></Field>
+              <Field label="Calibre du fruit">
+                <Select value={fruitCalibre} onChange={(e) => setFruitCalibre(e.target.value)}>
+                  <option value="">--</option>
+                  {Object.entries(FRUIT_CALIBRE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </Select>
+              </Field>
+              <Field label="Maturation">
+                <Select value={maturation} onChange={(e) => setMaturation(e.target.value)}>
+                  <option value="">--</option>
+                  {Object.entries(MATURATION_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                </Select>
+              </Field>
+            </div>
+            <div className="flex flex-wrap gap-3 text-xs">
+              {Object.entries(SEED_EXTRACTION_LABELS).map(([k, v]) => (
+                <label key={k} className="flex items-center gap-1.5"><input type="radio" name="extraction" checked={seedExtraction === k} onChange={() => setSeedExtraction(k)} /> {v}</label>
+              ))}
+            </div>
+            {Number.parseInt(seedCount, 10) > 0 ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Serre">
+                  <Select value={greenhouseId} onChange={(e) => { setGreenhouseId(e.target.value); setTableId("") }}>
+                    <option value="">--</option>
+                    {greenhouses.map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+                  </Select>
+                </Field>
+                <Field label="Table">
+                  <Select value={tableId} onChange={(e) => setTableId(e.target.value)}>
+                    <option value="">--</option>
+                    {tables.filter((t: any) => t.greenhouse_id === greenhouseId).map((t: any) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </Select>
+                </Field>
+              </div>
+            ) : null}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setClosingVoie(null)}>Annuler</Button>
+              <Button size="sm" onClick={() => onHarvest({ seedCount: Math.max(0, Number.parseInt(seedCount, 10) || 0), harvestDate, fruitCalibre, maturation, seedExtraction, greenhouseId, tableId })}>Enregistrer</Button>
+            </div>
+          </Card>
+        ) : (
+          <Card className="grid gap-3 p-4">
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {Object.entries(AVORTEMENT_LABELS).map(([k, v]) => (
+                <label key={k} className="flex items-center gap-1.5 text-xs">
+                  <input type="checkbox" checked={causes.includes(k)} onChange={(e) => setCauses((cur) => e.target.checked ? [...cur, k] : cur.filter((c) => c !== k))} /> {v}
+                </label>
+              ))}
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setClosingVoie(null)}>Annuler</Button>
+              <Button size="sm" variant="destructive" onClick={() => onAbort(causes)}>Enregistrer l'échec</Button>
+            </div>
+          </Card>
+        )
+      ) : null}
+    </div>
   )
 }
+
+// ---------------------------------------------------------------------------
+// Module Pollen (inchangé)
+// ---------------------------------------------------------------------------
 
 function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRefresh: () => void }) {
   const [creating, setCreating] = useState(false)
@@ -1237,16 +1220,8 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
       conservation_mode: conservationMode || null,
       remarks: remarks.trim(),
     })
-    if (error) {
-      alert(`Erreur : ${error.message}`)
-      return
-    }
-    setLotNumber("")
-    setRoseName("")
-    setAntherQuality("")
-    setDehiscence("")
-    setConservationMode("")
-    setRemarks("")
+    if (error) { alert(`Erreur : ${error.message}`); return }
+    setLotNumber(""); setRoseName(""); setAntherQuality(""); setDehiscence(""); setConservationMode(""); setRemarks("")
     setCreating(false)
     onRefresh()
   }
@@ -1264,47 +1239,33 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
           <h3 className="text-sm font-medium text-foreground">Gestion des stocks de pollen conservé</h3>
           <p className="text-xs text-muted-foreground">Récolte, qualité des anthères, déhiscence et modes de conservation longue durée.</p>
         </div>
-        <Button onClick={() => setCreating((v) => !v)} className="gap-1.5">
-          <Plus className="size-4" /> Nouveau lot de pollen
-        </Button>
+        <Button onClick={() => setCreating((v) => !v)} className="gap-1.5"><Plus className="size-4" /> Nouveau lot de pollen</Button>
       </div>
 
       {creating ? (
         <Card className="p-4">
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <Field label="Numéro de lot" hint="Identifiant unique du lot">
-              <Input value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} placeholder="Ex: P-2026-01" />
-            </Field>
-            <Field label="Nom du rosier (donneur)">
-              <Input value={roseName} onChange={(e) => setRoseName(e.target.value)} placeholder="Ex: Graham Thomas" />
-            </Field>
+            <Field label="Numéro de lot"><Input value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} placeholder="Ex: P-2026-01" /></Field>
+            <Field label="Nom du rosier (donneur)"><Input value={roseName} onChange={(e) => setRoseName(e.target.value)} placeholder="Ex: Graham Thomas" /></Field>
             <Field label="Qualité des anthères">
               <Select value={antherQuality} onChange={(e) => setAntherQuality(e.target.value)}>
-                <option value="">-- Sélectionner --</option>
-                {Object.entries(ANTHER_QUALITY_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
+                <option value="">--</option>
+                {Object.entries(ANTHER_QUALITY_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </Select>
             </Field>
             <Field label="Déhiscence">
               <Select value={dehiscence} onChange={(e) => setDehiscence(e.target.value)}>
-                <option value="">-- Sélectionner --</option>
-                {Object.entries(DEHISCENCE_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
+                <option value="">--</option>
+                {Object.entries(DEHISCENCE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </Select>
             </Field>
             <Field label="Mode de conservation">
               <Select value={conservationMode} onChange={(e) => setConservationMode(e.target.value)}>
-                <option value="">-- Sélectionner --</option>
-                {Object.entries(CONSERVATION_LABELS).map(([k, v]) => (
-                  <option key={k} value={k}>{v}</option>
-                ))}
+                <option value="">--</option>
+                {Object.entries(CONSERVATION_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </Select>
             </Field>
-            <Field label="Remarques">
-              <Input value={remarks} onChange={(e) => setRemarks(e.target.value)} placeholder="Observations..." />
-            </Field>
+            <Field label="Remarques"><Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setCreating(false)}>Annuler</Button>
@@ -1314,21 +1275,15 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
       ) : null}
 
       {pollenLots.length === 0 ? (
-        <EmptyState
-          icon={<FlaskConical className="size-8" />}
-          title="Aucun lot de pollen enregistré"
-          description="Créez des lots de pollen pour pouvoir les associer ultérieurement dans vos croisements."
-        />
+        <EmptyState icon={<FlaskConical className="size-8" />} title="Aucun lot de pollen enregistré" description="Créez des lots de pollen pour pouvoir les associer ultérieurement dans vos croisements." />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {pollenLots.map((pl) => (
-            <Card key={pl.id} className="p-4 flex flex-col justify-between gap-3">
+            <Card key={pl.id} className="flex flex-col justify-between gap-3 p-4">
               <div>
                 <div className="flex items-center justify-between">
                   <span className="font-serif text-base font-semibold text-primary">Lot #{pl.lot_number}</span>
-                  <Button variant="destructive" size="sm" onClick={() => deletePollenLot(pl.id)} className="size-7 p-0">
-                    <Trash2 className="size-3.5" />
-                  </Button>
+                  <button onClick={() => deletePollenLot(pl.id)} className="text-muted-foreground hover:text-destructive"><Trash2 className="size-3.5" /></button>
                 </div>
                 <p className="mt-1 text-sm font-medium text-foreground">{pl.rose_name ?? "Rosier inconnu"}</p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
@@ -1338,9 +1293,7 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
                 </div>
                 {pl.remarks ? <p className="mt-2 text-xs text-muted-foreground italic">{pl.remarks}</p> : null}
               </div>
-              <div className="border-t border-border pt-2 text-[10px] text-muted-foreground">
-                Créé le {formatDate(pl.created_at)}
-              </div>
+              <div className="border-t border-border pt-2 text-[10px] text-muted-foreground">Créé le {formatDate(pl.created_at)}</div>
             </Card>
           ))}
         </div>

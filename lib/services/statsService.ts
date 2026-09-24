@@ -30,6 +30,7 @@ export interface ParentPerformance {
   parentName: string
   role: "mere" | "pere"
   crossesCount: number
+  pollinatedFlowers: number
   fruitsHarvested: number
   emptyFruits: number
   nouaisonRate: number
@@ -73,6 +74,7 @@ interface CrossRow {
   seed_parent: string | null
   pollen_parent: string | null
   pollination_date: string | null
+  flower_count: number | null
 }
 
 interface HarvestRow {
@@ -155,7 +157,9 @@ export function buildMonthlyReports(
   for (const c of crosses) {
     const mk = monthKey(c.pollination_date)
     if (!months.has(mk)) months.set(mk, { pollinated: 0, harvested: 0, empty: 0, seeds: 0, diseases: {}, treated: 0, totalSeedlings: 0 })
-    months.get(mk)!.pollinated += 1
+    // Le taux de nouaison compare des fruits noués à des fleurs pollinisées,
+    // pas à un nombre de lots : on additionne flower_count, pas +1 par lot.
+    months.get(mk)!.pollinated += c.flower_count ?? 0
   }
 
   const harvestByCross = new Map<string, HarvestRow[]>()
@@ -224,6 +228,7 @@ export function buildParentPerformances(
     parentName: string
     role: "mere" | "pere"
     crossesCount: number
+    pollinatedFlowers: number
     fruitsHarvested: number
     emptyFruits: number
     totalSeeds: number
@@ -242,6 +247,7 @@ export function buildParentPerformances(
         parentName: name,
         role,
         crossesCount: 0,
+        pollinatedFlowers: 0,
         fruitsHarvested: 0,
         emptyFruits: 0,
         totalSeeds: 0,
@@ -252,6 +258,7 @@ export function buildParentPerformances(
     }
     const acc = parents.get(key)!
     acc.crossesCount += 1
+    acc.pollinatedFlowers += cross.flower_count ?? 0
     const cHarvests = harvestByCross.get(cross.id) ?? []
     acc.fruitsHarvested += cHarvests.length
     for (const h of cHarvests) {
@@ -276,7 +283,7 @@ export function buildParentPerformances(
 
   return Array.from(parents.values())
     .map((acc) => {
-      const nouaisonRate = computeNouaisonRate(acc.crossesCount, acc.fruitsHarvested)
+      const nouaisonRate = computeNouaisonRate(acc.pollinatedFlowers, acc.fruitsHarvested)
       const vacuiteRate = computeVacuiteRate(acc.fruitsHarvested, acc.emptyFruits)
       const avgSeedCount = acc.fruitsHarvested > 0 ? Math.round((acc.totalSeeds / acc.fruitsHarvested) * 10) / 10 : 0
       const selectedRatio = acc.totalSeedlings > 0 ? acc.selectedSeedlings / acc.totalSeedlings : 0
@@ -285,6 +292,7 @@ export function buildParentPerformances(
         parentName: acc.parentName,
         role: acc.role,
         crossesCount: acc.crossesCount,
+        pollinatedFlowers: acc.pollinatedFlowers,
         fruitsHarvested: acc.fruitsHarvested,
         emptyFruits: acc.emptyFruits,
         nouaisonRate,
@@ -304,7 +312,9 @@ export function buildSeasonBilan(raw: RawData): SeasonBilan {
   const parentPerformances = buildParentPerformances(raw.crosses, raw.harvests, raw.seedlings)
 
   const totalCrosses = raw.crosses.length
-  const totalPollinatedFlowers = raw.crosses.length
+  // Un couple compte pour 1 croisement mais peut avoir plusieurs lots :
+  // le total de fleurs pollinisées additionne flower_count par lot.
+  const totalPollinatedFlowers = raw.crosses.reduce((sum, c) => sum + (c.flower_count ?? 0), 0)
   const totalHarvestedFruits = raw.harvests.length
   const totalEmpty = raw.harvests.filter(isEmptyFruit).length
   const totalSeeds = raw.harvests.reduce((sum, h) => sum + h.seed_count, 0)
@@ -349,15 +359,27 @@ export function buildSeasonBilan(raw: RawData): SeasonBilan {
 
 export async function fetchRawData(): Promise<RawData> {
   const [{ data: cData }, { data: hData }, { data: sData }, { data: pData }] = await Promise.all([
-    supabase.from("crosses").select("id, code, seed_parent, pollen_parent, pollination_date").order("created_at", { ascending: false }),
-    supabase.from("hip_harvests").select("id, cross_id, code, harvest_date, seed_count, seed_extraction, fruit_calibre").order("created_at", { ascending: false }),
+    supabase.from("crosses").select("id, code, seed_parent, pollen_parent, pollination_date, flower_count").order("created_at", { ascending: false }),
+    supabase.from("cross_fruits").select("id, cross_id, fruit_name, harvest_date, seed_count, seed_extraction, fruit_calibre, status").order("created_at", { ascending: false }),
     supabase.from("seedlings").select("id, batch_id, code, status, phenotype_vigueur, pression_sanitaire, traitement").order("created_at", { ascending: false }),
     supabase.from("pollen_lots").select("id, lot_number, rose_name, anther_quality, dehiscence").order("created_at", { ascending: false }),
   ])
 
   return {
     crosses: (cData ?? []) as CrossRow[],
-    harvests: (hData ?? []) as HarvestRow[],
+    // cross_fruits est la source réelle des récoltes (une ligne par fruit,
+    // Voie A/B) ; hip_harvests était l'ancienne table par lot, plus alimentée.
+    harvests: ((hData ?? []) as Array<Record<string, unknown>>)
+      .filter((row) => row.status === "récolté" || row.status === "vide")
+      .map((row) => ({
+        id: row.id as string,
+        cross_id: row.cross_id as string,
+        code: row.fruit_name as string,
+        harvest_date: row.harvest_date as string | null,
+        seed_count: (row.seed_count as number) ?? 0,
+        seed_extraction: row.seed_extraction as string | null,
+        fruit_calibre: row.fruit_calibre as string | null,
+      })),
     seedlings: (sData ?? []) as SeedlingRow[],
     pollenLots: (pData ?? []) as PollenRow[],
   }

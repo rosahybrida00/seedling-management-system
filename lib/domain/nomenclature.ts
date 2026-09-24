@@ -1,25 +1,16 @@
 // ---------------------------------------------------------------------------
-// nomenclature — génération automatique des codes de traçabilité Rosa Hybrida.
+// nomenclature — génération des codes de traçabilité Rosa Hybrida.
 //
-// N2 Specification:
+// 1. Racine phonétique (base_syllable) : extraite des noms des parents.
+//    Ex: Black Baccara × Golden Perfumella → "blapego"
 //
-// 1. Racine Phonétique (base_syllable):
-//    Extraite des noms des parents. Ex: Black Baccara × Golden Perfumella → "blape"
-//    - Prend les 2-3 premières syllabes de chaque parent et les concatène.
+// 2. Code Lot (lettre majuscule) : [base]-[LotLettre]        ex: blapego-A
+// 3. Code Fruit (lettre minuscule) : [base]-[LotLettre]-[fleurLettre]
+//                                                          ex: blapego-A-a
+// 4. Nom de graine (numéro) : [codeFruit]-[numéro]         ex: blapego-A-a-1
 //
-// 2. Code Fruit / Fleur:
-//    [base_syllable][lot_letter][flower_letter]  (ex: blapeAa, blapeAb)
-//    - lot_letter: lettre majuscule de saison (A, B, C...)
-//    - flower_letter: lettre minuscule de fleur (a, b, c...)
-//    Si recroisé plus tard: blapeBa, etc.
-//
-// 3. Code Semis Unique Définitif (seedling_code):
-//    [base_syllable][lot_letter][flower_letter][index]  (ex: blapeAc1, blapeAc2)
-//    Attribué uniquement aux graines ayant germé et levé en serre.
-//
-// 4. Code Catalogue Semis (catalogue-semis):
-//    [base_syllable]-[lot_letter]-[flower_letter]-[seed_count]-[year]
-//    Ex: blape-A-a-12-2026
+// Aucune année n'est insérée dans le code : la traçabilité temporelle est
+// portée par les dates enregistrées sur le lot et le fruit, pas par le nom.
 // ---------------------------------------------------------------------------
 
 function extractSyllables(name: string): string {
@@ -46,10 +37,16 @@ function extractSyllables(name: string): string {
   return firstWord.slice(0, Math.min(6, firstWord.length))
 }
 
+/** Racine phonétique du couple de parents (ex: "blapego"). */
 export function generateBaseSyllable(seedParent: string, pollenParent: string): string {
   const syll1 = extractSyllables(seedParent)
   const syll2 = extractSyllables(pollenParent)
   return syll1 + syll2
+}
+
+/** Clé unique et stable d'un couple, indépendante de la casse. */
+export function pairKey(seedParent: string, pollenParent: string): string {
+  return `${(seedParent ?? "").trim().toLowerCase()}×${(pollenParent ?? "").trim().toLowerCase()}`
 }
 
 export function lotLetter(index: number): string {
@@ -76,61 +73,21 @@ export function flowerIndexFromLetter(letter: string | null | undefined): number
   return Number.isNaN(code) ? 0 : Math.max(0, code - 97)
 }
 
-export function generateFruitCode(
-  baseSyllable: string,
-  lotIndex: number,
-  flowerIndex: number,
-  year = new Date().getFullYear(),
-): string {
-  return `${baseSyllable}-${year}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}`
+/** Code du lot : base-LotLettre (ex: blapego-A). */
+export function generateLotCode(baseSyllable: string, lotIndex: number): string {
+  return `${baseSyllable}-${lotLetter(lotIndex)}`
 }
 
-export function generateSeedlingCode(
-  baseSyllable: string,
-  lotIndex: number,
-  flowerIndex: number,
-  seedlingIndex: number,
-): string {
-  return `${baseSyllable}-${new Date().getFullYear()}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}-${seedlingIndex}`
+/** Code du fruit : base-LotLettre-fleurLettre (ex: blapego-A-a). Aucune année. */
+export function generateFruitCode(baseSyllable: string, lotIndex: number, flowerIndex: number): string {
+  return `${generateLotCode(baseSyllable, lotIndex)}-${flowerLetter(flowerIndex)}`
 }
 
-export function generateCatalogueCode(
-  baseSyllable: string,
-  lotIndex: number,
-  flowerIndex: number,
-  seedCount: number,
-  year?: number,
-): string {
-  const y = year ?? new Date().getFullYear()
-  return `${baseSyllable}-${lotLetter(lotIndex)}-${flowerLetter(flowerIndex)}-${Math.max(0, seedCount)}-${y}`
-}
-
-export interface NomenclatureInput {
-  seedParent: string | null
-  pollenParent: string | null
-  lotIndex: number
-  flowerIndex: number
-  seedCount: number
-  year?: number
-}
-
-export function generateSeedlingCodeFromInput(input: NomenclatureInput): string {
-  const base = generateBaseSyllable(input.seedParent ?? "", input.pollenParent ?? "")
-  return generateCatalogueCode(base, input.lotIndex, input.flowerIndex, input.seedCount, input.year)
-}
-
-export function generateSeedlingCodeFromParents(
-  seedParent: string,
-  pollenParent: string,
-  lotIndex: number,
-  flowerIndex: number,
-  seedCount: number,
-): string {
-  return generateSeedlingCodeFromInput({
-    seedParent,
-    pollenParent,
-    lotIndex,
-    flowerIndex,
-    seedCount,
-  })
+/**
+ * Nom final de la graine récoltée : codeFruit-numéro (ex: blapego-A-a-1).
+ * Le numéro est ajouté juste après la lettre minuscule qui définit le fruit.
+ */
+export function generateSeedName(fruitCode: string, seedNumber: number): string {
+  const cleanFruitCode = fruitCode.replace(/-+$/, "")
+  return `${cleanFruitCode}-${seedNumber}`
 }

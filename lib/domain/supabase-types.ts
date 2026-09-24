@@ -184,9 +184,19 @@ export interface Treatment {
 export interface Seedling {
   id: string
   user_id: string
-  batch_id: string
+  // Lien direct vers le croisement (nouveau modèle) : n'a plus besoin de
+  // passer par un lot de semis pour savoir de quel couple/fruit vient le
+  // semis. batch_id/index sont conservés pour les semis créés avant ce
+  // changement et restent optionnels.
+  cross_id: string
+  fruit_code: string | null
+  seed_code: string | null
+  table_id: string | null
+  row: number | null
+  position: number | null
+  batch_id: string | null
+  index: number | null
   code: string
-  index: number
   status: "observing" | "discarded" | "selected"
   remarks: string
   phenotype_vigueur: string | null
