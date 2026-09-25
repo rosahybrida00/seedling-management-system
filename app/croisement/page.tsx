@@ -17,6 +17,7 @@ import {
   SEED_EXTRACTION_LABELS,
 } from "@/lib/domain/supabase-types"
 import { generateBaseSyllable, pairKey, lotLetter, generateLotCode, generateFruitCode, lotIndexFromLetter } from "@/lib/domain/nomenclature"
+import { getWeatherForDate, type DailyWeather } from "@/lib/services/weatherService"
 
 // ---------------------------------------------------------------------------
 // Architecture : Couple (parents) -> Lot (une pollinisation, table `crosses`)
@@ -43,6 +44,40 @@ const CALIBRE_STAGE_OPTIONS = ["Amorce (<5mm)", "Petit (5-10mm)", "Moyen (10-15m
 const COLOR_OPTIONS = ["Jaune", "Orange", "Rouge"]
 const BEHAVIOR_OPTIONS = ["Normal", "Flétrissement partiel", "Taches / lésions", "Chute imminente", "Attaque insectes/oiseaux"]
 
+// Le pistil (organe reproducteur femelle) comprend le stigmate (capture le
+// pollen), le style (relie le stigmate à l'ovaire) et l'ovaire — c'est lui
+// qui, après fécondation, se transforme en fruit (d'où "ovaire noué").
+const PISTIL_GROUPS: Array<{ title: string; options: Record<string, string> }> = [
+  {
+    title: "Le stigmate (réception du pollen et état de réceptivité)",
+    options: {
+      stigmate_receptif: "Réceptif / Humide (brillant, prêt à capturer le pollen)",
+      stigmate_asseche: "Asséché / Bruni prématurément (compromet la germination du pollen)",
+      stigmate_parasites: "Attaque de parasites / Champignons (moisissure, pourriture)",
+      stigmate_absence: "Absence ou malformation",
+    },
+  },
+  {
+    title: "Le style (canal de progression du tube pollinique)",
+    options: {
+      style_sain: "Sain / Bien érigé",
+      style_fletri: "Flétri / Cassé",
+      style_necrose: "Taches nécrotiques ou lésions",
+      style_insectes: "Attaque d'insectes (ex : piqûres de parasites)",
+    },
+  },
+  {
+    title: "L'ovaire (base du pistil)",
+    options: {
+      ovaire_sain: "Sain et bien formé (aspect turgescent, vert, sans défaut visible)",
+      ovaire_malforme: "Malformé / Asymétrique (anomalie de développement de la fleur)",
+      ovaire_sousdeveloppe: "Sous-développé / Trop petit (risque d'échec de la nouaison)",
+      ovaire_lesions: "Présence de lésions / blessures (traces de manipulation ou de frottement)",
+    },
+  },
+]
+const PISTIL_OPTIONS: Record<string, string> = Object.fromEntries(PISTIL_GROUPS.flatMap((g) => Object.entries(g.options)))
+
 interface Cross {
   id: string
   code: string
@@ -59,12 +94,15 @@ interface Cross {
   pollen_lot_id: string | null
   location: string | null
   containers: string | null
+  pistil_checklist: string[]
 }
 
 interface PollenLot {
   id: string
   lot_number: string
   rose_name: string | null
+  harvest_date: string | null
+  weather_data: Record<string, any> | null
   anther_quality: string | null
   dehiscence: string | null
   conservation_mode: string | null
@@ -159,19 +197,15 @@ function CroisementContent() {
     pollenParent: "",
     pollenParentId: "",
     pollinationDate: new Date().toISOString().split("T")[0],
-    location: "",
-    containers: "",
-    temperature: "",
-    humidity: "",
-    wind: "",
-    precipitation: "",
-    sunshine: "",
     pollinatedFlowersCount: "",
     pollenType: "frais",
     pollenLotId: "",
     freshAntherQuality: "",
     freshDehiscence: "",
+    pistilChecklist: [] as string[],
   })
+  const [pollinationWeather, setPollinationWeather] = useState<DailyWeather | null>(null)
+  const [weatherLoading, setWeatherLoading] = useState(false)
 
   const [seedSuggestions, setSeedSuggestions] = useState<VarietySuggestion[]>([])
   const [pollenSuggestions, setPollenSuggestions] = useState<VarietySuggestion[]>([])
@@ -212,6 +246,16 @@ function CroisementContent() {
     return () => clearTimeout(timer)
   }, [form.pollenParent])
 
+  // Météo automatique du module Météo (historique quotidien de l'appli),
+  // jamais interrogée en direct depuis ce formulaire.
+  useEffect(() => {
+    if (!form.pollinationDate) { setPollinationWeather(null); return }
+    let cancelled = false
+    setWeatherLoading(true)
+    getWeatherForDate(form.pollinationDate).then((w) => { if (!cancelled) { setPollinationWeather(w); setWeatherLoading(false) } })
+    return () => { cancelled = true }
+  }, [form.pollinationDate])
+
   async function fetchData() {
     setLoading(true)
     const [{ data: cData }, { data: fData }, { data: sdData }, { data: pData }, { data: tData }, { data: ghData }, { data: gtData }] = await Promise.all([
@@ -233,61 +277,12 @@ function CroisementContent() {
     setLoading(false)
   }
 
-  // Capture météo complète (pas seulement température/humidité). Si la date
-  // est dans le passé, l'historique de l'appli est interrogé obligatoirement ;
-  // si elle est du jour, la météo en temps réel est utilisée à la place.
-  async function fetchWeatherFor(date: string): Promise<Record<string, unknown>> {
-    const isToday = date === new Date().toISOString().split("T")[0]
-    const fallback: Record<string, unknown> = { requested_date: date, mode: isToday ? "temps_reel" : "historique" }
-    try {
-      const { data: authData } = await supabase.auth.getUser()
-      if (!authData.user) return fallback
-      const { data: profile } = await supabase.from("profiles").select("city, postal_code, latitude, longitude").eq("id", authData.user.id).maybeSingle()
-      const p = profile as { city?: string; postal_code?: string; latitude?: number; longitude?: number } | null
-      let lat = p?.latitude, lon = p?.longitude
-      let placeName = p?.city ?? p?.postal_code ?? null
-      if (lat == null || lon == null) {
-        const city = p?.city || p?.postal_code
-        if (!city) return fallback
-        const geoResponse = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=fr&format=json`)
-        const geoData = await geoResponse.json()
-        const geo = geoData?.results?.[0]
-        if (!geo) return fallback
-        lat = geo.latitude; lon = geo.longitude; placeName = geo.name
-      }
-
-      const dailyVars = "temperature_2m_mean,temperature_2m_max,temperature_2m_min,relative_humidity_2m_mean,precipitation_sum,windspeed_10m_max,sunshine_duration,shortwave_radiation_sum"
-      const url = isToday
-        ? `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=${dailyVars}&timezone=auto`
-        : `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${date}&end_date=${date}&daily=${dailyVars}&timezone=auto`
-      const response = await fetch(url)
-      if (!response.ok) return fallback
-      const data = await response.json()
-      const idx = 0
-      return {
-        ...fallback,
-        location: placeName,
-        temperature_mean: data?.daily?.temperature_2m_mean?.[idx] ?? null,
-        temperature_max: data?.daily?.temperature_2m_max?.[idx] ?? null,
-        temperature_min: data?.daily?.temperature_2m_min?.[idx] ?? null,
-        humidity_mean: data?.daily?.relative_humidity_2m_mean?.[idx] ?? null,
-        precipitation_sum: data?.daily?.precipitation_sum?.[idx] ?? null,
-        wind_max: data?.daily?.windspeed_10m_max?.[idx] ?? null,
-        sunshine_duration_s: data?.daily?.sunshine_duration?.[idx] ?? null,
-        radiation_sum: data?.daily?.shortwave_radiation_sum?.[idx] ?? null,
-        source: "open-meteo",
-      }
-    } catch {
-      return fallback
-    }
-  }
-
   function resetForm() {
     setForm({
       seedParent: "", seedParentId: "", pollenParent: "", pollenParentId: "",
       pollinationDate: new Date().toISOString().split("T")[0],
-      location: "", containers: "", temperature: "", humidity: "", wind: "", precipitation: "", sunshine: "",
       pollinatedFlowersCount: "", pollenType: "frais", pollenLotId: "", freshAntherQuality: "", freshDehiscence: "",
+      pistilChecklist: [],
     })
   }
 
@@ -306,12 +301,9 @@ function CroisementContent() {
     const lot = lotLetter(nextLotIndex)
     const code = generateLotCode(base, nextLotIndex)
 
-    const climateData: Record<string, unknown> = await fetchWeatherFor(form.pollinationDate)
-    if (form.temperature) climateData.temperature_observed = form.temperature
-    if (form.humidity) climateData.humidity_observed = form.humidity
-    if (form.wind) climateData.wind_observed = form.wind
-    if (form.precipitation) climateData.precipitation_observed = form.precipitation
-    if (form.sunshine) climateData.sunshine_observed = form.sunshine
+    const climateData: Record<string, unknown> = pollinationWeather
+      ? { temperature: pollinationWeather.temperature, humidity: pollinationWeather.humidity, uv_index: pollinationWeather.uv_index, location: pollinationWeather.location, source: pollinationWeather.source, date: pollinationWeather.date }
+      : {}
 
     const flowerCount = form.pollinatedFlowersCount.trim() ? Math.max(1, Number.parseInt(form.pollinatedFlowersCount, 10) || 0) : null
 
@@ -322,8 +314,6 @@ function CroisementContent() {
       pollen_parent: pollenVal,
       pollination_date: fromDateInput(form.pollinationDate),
       remarks: "",
-      location: form.location || null,
-      containers: form.containers || null,
       base_syllable: base,
       lot_letter: lot,
       climate_data: climateData,
@@ -336,6 +326,7 @@ function CroisementContent() {
       pollen_quality: form.pollenType === "frais"
         ? { anther_quality: form.freshAntherQuality || null, dehiscence: form.freshDehiscence || null }
         : {},
+      pistil_checklist: form.pistilChecklist,
     }
 
     const { data: createdLot, error } = await supabase.from("crosses").insert(payload).select("*").single()
@@ -518,6 +509,8 @@ function CroisementContent() {
             lotForm={form}
             setLotForm={setForm}
             pollenLots={pollenLots}
+            pollinationWeather={pollinationWeather}
+            weatherLoading={weatherLoading}
             onBack={() => { setFocusedKey(null); setFocusedLot(null); setCreating(false) }}
             onStartAddLot={() => {
               setAddingLotFor({ seedParent: focusedCouple[1].seedParent, pollenParent: focusedCouple[1].pollenParent })
@@ -547,13 +540,13 @@ function CroisementContent() {
                 seedSuggestions={seedSuggestions} pollenSuggestions={pollenSuggestions}
                 showSeedSugg={showSeedSugg} showPollenSugg={showPollenSugg}
                 setShowSeedSugg={setShowSeedSugg} setShowPollenSugg={setShowPollenSugg}
-                pollenLots={pollenLots}
+                pollenLots={pollenLots} pollinationWeather={pollinationWeather} weatherLoading={weatherLoading}
                 onCancel={() => setCreating(false)}
                 onSubmit={createLot}
               />
             ) : null}
 
-            {couples.length === 0 ? (
+            {creating ? null : couples.length === 0 ? (
               <EmptyState icon={<Flower2 className="size-8" />} title="Aucun croisement" description="Commencez par enregistrer un croisement entre deux rosiers parents." />
             ) : (
               <div className="grid gap-2">
@@ -645,16 +638,20 @@ function InlineDate({ value, onSave, textClassName }: { value: string | null; on
 
 function LotForm({
   form, setForm, lockParents, seedSuggestions, pollenSuggestions, showSeedSugg, showPollenSugg,
-  setShowSeedSugg, setShowPollenSugg, pollenLots, onCancel, onSubmit,
+  setShowSeedSugg, setShowPollenSugg, pollenLots, pollinationWeather, weatherLoading, onCancel, onSubmit,
 }: {
   form: any; setForm: (updater: any) => void; lockParents: boolean
   seedSuggestions: VarietySuggestion[]; pollenSuggestions: VarietySuggestion[]
   showSeedSugg: boolean; showPollenSugg: boolean
   setShowSeedSugg: (v: boolean) => void; setShowPollenSugg: (v: boolean) => void
-  pollenLots: PollenLot[]; onCancel: () => void; onSubmit: () => void
+  pollenLots: PollenLot[]; pollinationWeather: DailyWeather | null; weatherLoading: boolean
+  onCancel: () => void; onSubmit: () => void
 }) {
   return (
     <Card className="p-4">
+      <button onClick={onCancel} className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="size-4" /> Retour
+      </button>
       {lockParents ? (
         <p className="mb-3 text-sm font-medium text-foreground">{form.seedParent} <span className="text-muted-foreground">×</span> {form.pollenParent}</p>
       ) : null}
@@ -695,8 +692,6 @@ function LotForm({
         ) : null}
 
         <Field label="Date de pollinisation"><Input type="date" value={form.pollinationDate} onChange={(e) => setForm({ ...form, pollinationDate: e.target.value })} /></Field>
-        <Field label="Emplacement" hint="Serre, jardin, pleine terre..."><Input value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} placeholder="Ex: Serre 1" /></Field>
-        <Field label="Contenants"><Input value={form.containers} onChange={(e) => setForm({ ...form, containers: e.target.value })} placeholder="Ex: Pots 3L" /></Field>
         <Field label="Nombre de fleurs pollinisées" hint="Laissez vide pour le renseigner plus tard"><Input type="number" min={1} value={form.pollinatedFlowersCount} onChange={(e) => setForm({ ...form, pollinatedFlowersCount: e.target.value })} /></Field>
 
         <Field label="Type de pollen">
@@ -750,13 +745,36 @@ function LotForm({
         </div>
       ) : null}
 
-      <div className="mt-3 grid gap-3 rounded-md bg-muted/20 p-3 sm:grid-cols-3 lg:grid-cols-5">
-        <p className="col-span-full -mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Météo du jour (relevé manuel, en complément de l'historique)</p>
-        <Field label="Température (°C)"><Input type="number" value={form.temperature} onChange={(e) => setForm({ ...form, temperature: e.target.value })} /></Field>
-        <Field label="Humidité (%)"><Input type="number" value={form.humidity} onChange={(e) => setForm({ ...form, humidity: e.target.value })} /></Field>
-        <Field label="Vent (km/h)"><Input type="number" value={form.wind} onChange={(e) => setForm({ ...form, wind: e.target.value })} /></Field>
-        <Field label="Précipitations (mm)"><Input type="number" value={form.precipitation} onChange={(e) => setForm({ ...form, precipitation: e.target.value })} /></Field>
-        <Field label="Ensoleillement (h)"><Input type="number" value={form.sunshine} onChange={(e) => setForm({ ...form, sunshine: e.target.value })} /></Field>
+      <div className="mt-3 grid gap-3">
+        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">État du pistil observé</p>
+        {PISTIL_GROUPS.map((group) => (
+          <div key={group.title} className="grid gap-1">
+            <p className="text-xs font-medium text-foreground">{group.title}</p>
+            <div className="flex flex-wrap gap-3 text-xs">
+              {Object.entries(group.options).map(([k, v]) => (
+                <label key={k} className="flex items-center gap-1.5">
+                  <input type="checkbox" checked={form.pistilChecklist.includes(k)} onChange={(e) => setForm({ ...form, pistilChecklist: e.target.checked ? [...form.pistilChecklist, k] : form.pistilChecklist.filter((c: string) => c !== k) })} /> {v}
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-3 rounded-md bg-muted/20 p-3">
+        <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Météo du jour (module Météo, automatique)</p>
+        {weatherLoading ? (
+          <p className="text-xs text-muted-foreground">Récupération de la météo…</p>
+        ) : pollinationWeather ? (
+          <div className="flex flex-wrap gap-1.5">
+            {pollinationWeather.temperature != null ? <Badge tone="neutral">{Math.round(pollinationWeather.temperature)}°C</Badge> : null}
+            {pollinationWeather.humidity != null ? <Badge tone="neutral">{Math.round(pollinationWeather.humidity)}% hum.</Badge> : null}
+            {pollinationWeather.uv_index != null ? <Badge tone="neutral">UV {Math.round(pollinationWeather.uv_index)}</Badge> : null}
+            <Badge tone="neutral">{pollinationWeather.source === "live" ? "Temps réel" : "Historique"}</Badge>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">Météo indisponible pour cette date (localisation manquante dans le profil).</p>
+        )}
       </div>
 
       <div className="mt-4 flex justify-end gap-2">
@@ -775,7 +793,7 @@ function LotForm({
 
 function CoupleFocusView({
   coupleKey, couple, focusedLot, setFocusedLot, fruitsByLot, seedsByFruit, treatmentsByCross,
-  greenhouses, tables, creatingLot, lotForm, setLotForm, pollenLots,
+  greenhouses, tables, creatingLot, lotForm, setLotForm, pollenLots, pollinationWeather, weatherLoading,
   onBack, onStartAddLot, onCancelAddLot, onSubmitLot, onPatchLot, onDeleteLot,
   onValidateFlowerCount, onHarvestFruit, onAbortFruit, onAddPhenologyObservation,
 }: any) {
@@ -813,11 +831,12 @@ function CoupleFocusView({
           form={lotForm} setForm={setLotForm} lockParents
           seedSuggestions={[]} pollenSuggestions={[]} showSeedSugg={false} showPollenSugg={false}
           setShowSeedSugg={() => {}} setShowPollenSugg={() => {}}
-          pollenLots={pollenLots} onCancel={onCancelAddLot} onSubmit={onSubmitLot}
+          pollenLots={pollenLots} pollinationWeather={pollinationWeather} weatherLoading={weatherLoading}
+          onCancel={onCancelAddLot} onSubmit={onSubmitLot}
         />
       ) : null}
 
-      {focusedLotData ? (
+      {creatingLot ? null : focusedLotData ? (
         <LotFocusView
           lot={focusedLotData}
           fruits={fruitsByLot.get(focusedLotData.id) ?? []}
@@ -895,10 +914,6 @@ function LotFocusView({
           <span className="font-serif text-lg text-primary">Lot {lot.lot_letter}</span>
           <span className="text-xs text-muted-foreground">Pollinisé le</span>
           <InlineDate value={lot.pollination_date} onSave={(v) => onPatch({ pollination_date: v })} />
-          <span className="text-xs text-muted-foreground">·</span>
-          <InlineText value={lot.location ?? ""} placeholder="emplacement" onSave={(v) => onPatch({ location: v })} />
-          <span className="text-xs text-muted-foreground">·</span>
-          <InlineText value={lot.containers ?? ""} placeholder="contenants" onSave={(v) => onPatch({ containers: v })} />
           <Badge tone={lot.pollen_type === "conservé" ? "primary" : "neutral"}>{lot.pollen_type === "conservé" ? "Pollen conservé" : "Pollen frais"}</Badge>
           <button onClick={onDelete} className="ml-auto text-muted-foreground hover:text-destructive" title="Supprimer le lot">
             <Trash2 className="size-4" />
@@ -909,11 +924,15 @@ function LotFocusView({
         </div>
         {Object.keys(climate).length > 0 ? (
           <div className="mt-2 flex flex-wrap gap-1.5">
-            {climate.temperature_observed != null || climate.temperature_mean != null ? <Badge tone="neutral">{climate.temperature_observed ?? climate.temperature_mean}°C</Badge> : null}
-            {climate.humidity_observed != null || climate.humidity_mean != null ? <Badge tone="neutral">{climate.humidity_observed ?? climate.humidity_mean}% hum.</Badge> : null}
-            {climate.wind_observed != null || climate.wind_max != null ? <Badge tone="neutral">{climate.wind_observed ?? climate.wind_max} km/h</Badge> : null}
-            {climate.precipitation_observed != null || climate.precipitation_sum != null ? <Badge tone="neutral">{climate.precipitation_observed ?? climate.precipitation_sum} mm</Badge> : null}
-            {climate.mode ? <Badge tone="neutral">{climate.mode === "temps_reel" ? "Météo temps réel" : "Météo historique"}</Badge> : null}
+            {climate.temperature != null ? <Badge tone="neutral">{Math.round(climate.temperature)}°C</Badge> : null}
+            {climate.humidity != null ? <Badge tone="neutral">{Math.round(climate.humidity)}% hum.</Badge> : null}
+            {climate.uv_index != null ? <Badge tone="neutral">UV {Math.round(climate.uv_index)}</Badge> : null}
+            {climate.source ? <Badge tone="neutral">{climate.source === "live" ? "Météo temps réel" : "Météo historique"}</Badge> : null}
+          </div>
+        ) : null}
+        {lot.pistil_checklist?.length > 0 ? (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            {lot.pistil_checklist.map((k: string) => <Badge key={k} tone="neutral">{PISTIL_OPTIONS[k] ?? k}</Badge>)}
           </div>
         ) : null}
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -934,12 +953,19 @@ function LotFocusView({
             </>
           )}
         </div>
-        {treatments.length > 0 ? (
-          <div className="mt-2 flex flex-wrap items-center gap-1.5">
-            <Shield className="size-3.5 text-muted-foreground" />
-            {treatments.map((t: Treatment) => <Badge key={t.id} tone="neutral">{t.product_name}</Badge>)}
+      </Card>
+
+      <Card className="p-3">
+        <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Rappel des suivis Parcelle (sanitaire, phyto, amendements)</p>
+        {treatments.length > 0 || lot.location || lot.containers ? (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {lot.location ? <Badge tone="neutral">{lot.location}</Badge> : null}
+            {lot.containers ? <Badge tone="neutral">{lot.containers}</Badge> : null}
+            {treatments.map((t: Treatment) => <Badge key={t.id} tone="neutral"><Shield className="size-3" /> {t.product_name}</Badge>)}
           </div>
-        ) : null}
+        ) : (
+          <p className="text-xs text-muted-foreground">Aucun suivi Parcelle enregistré pour ces parents pour l'instant.</p>
+        )}
       </Card>
 
       {lot.flower_count == null ? (
@@ -1205,23 +1231,36 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
   const [creating, setCreating] = useState(false)
   const [lotNumber, setLotNumber] = useState("")
   const [roseName, setRoseName] = useState("")
+  const [harvestDate, setHarvestDate] = useState(new Date().toISOString().split("T")[0])
   const [antherQuality, setAntherQuality] = useState("")
   const [dehiscence, setDehiscence] = useState("")
   const [conservationMode, setConservationMode] = useState("")
   const [remarks, setRemarks] = useState("")
+  const [harvestWeather, setHarvestWeather] = useState<DailyWeather | null>(null)
+  const [weatherLoading, setWeatherLoading] = useState(false)
+
+  useEffect(() => {
+    if (!creating || !harvestDate) return
+    let cancelled = false
+    setWeatherLoading(true)
+    getWeatherForDate(harvestDate).then((w) => { if (!cancelled) { setHarvestWeather(w); setWeatherLoading(false) } })
+    return () => { cancelled = true }
+  }, [creating, harvestDate])
 
   async function createPollenLot() {
     if (!lotNumber.trim()) return
     const { error } = await supabase.from("pollen_lots").insert({
       lot_number: lotNumber.trim(),
       rose_name: roseName.trim() || null,
+      harvest_date: harvestDate || null,
+      weather_data: harvestWeather ?? {},
       anther_quality: antherQuality || null,
       dehiscence: dehiscence || null,
       conservation_mode: conservationMode || null,
       remarks: remarks.trim(),
     })
     if (error) { alert(`Erreur : ${error.message}`); return }
-    setLotNumber(""); setRoseName(""); setAntherQuality(""); setDehiscence(""); setConservationMode(""); setRemarks("")
+    setLotNumber(""); setRoseName(""); setHarvestDate(new Date().toISOString().split("T")[0]); setAntherQuality(""); setDehiscence(""); setConservationMode(""); setRemarks("")
     setCreating(false)
     onRefresh()
   }
@@ -1244,9 +1283,13 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
 
       {creating ? (
         <Card className="p-4">
+          <button onClick={() => setCreating(false)} className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="size-4" /> Retour
+          </button>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Numéro de lot"><Input value={lotNumber} onChange={(e) => setLotNumber(e.target.value)} placeholder="Ex: P-2026-01" /></Field>
             <Field label="Nom du rosier (donneur)"><Input value={roseName} onChange={(e) => setRoseName(e.target.value)} placeholder="Ex: Graham Thomas" /></Field>
+            <Field label="Date de récolte"><Input type="date" value={harvestDate} onChange={(e) => setHarvestDate(e.target.value)} /></Field>
             <Field label="Qualité des anthères">
               <Select value={antherQuality} onChange={(e) => setAntherQuality(e.target.value)}>
                 <option value="">--</option>
@@ -1266,6 +1309,20 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
               </Select>
             </Field>
             <Field label="Remarques"><Input value={remarks} onChange={(e) => setRemarks(e.target.value)} /></Field>
+          </div>
+          <div className="mt-3 rounded-md bg-muted/20 p-3">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Météo à la récolte (module Météo, automatique)</p>
+            {weatherLoading ? (
+              <p className="text-xs text-muted-foreground">Récupération de la météo…</p>
+            ) : harvestWeather ? (
+              <div className="flex flex-wrap gap-1.5">
+                {harvestWeather.temperature != null ? <Badge tone="neutral">{Math.round(harvestWeather.temperature)}°C</Badge> : null}
+                {harvestWeather.humidity != null ? <Badge tone="neutral">{Math.round(harvestWeather.humidity)}% hum.</Badge> : null}
+                {harvestWeather.uv_index != null ? <Badge tone="neutral">UV {Math.round(harvestWeather.uv_index)}</Badge> : null}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Météo indisponible pour cette date.</p>
+            )}
           </div>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="ghost" onClick={() => setCreating(false)}>Annuler</Button>
@@ -1293,7 +1350,10 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
                 </div>
                 {pl.remarks ? <p className="mt-2 text-xs text-muted-foreground italic">{pl.remarks}</p> : null}
               </div>
-              <div className="border-t border-border pt-2 text-[10px] text-muted-foreground">Créé le {formatDate(pl.created_at)}</div>
+              <div className="border-t border-border pt-2 text-[10px] text-muted-foreground">
+                {pl.harvest_date ? `Récolté le ${formatDate(pl.harvest_date)}` : `Créé le ${formatDate(pl.created_at)}`}
+                {pl.weather_data?.temperature != null ? ` · ${Math.round(pl.weather_data.temperature)}°C` : ""}
+              </div>
             </Card>
           ))}
         </div>

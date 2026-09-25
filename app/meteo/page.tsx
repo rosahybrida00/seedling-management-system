@@ -1,11 +1,12 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import { CloudSun, Thermometer, Droplets, Sun, Cloud, MapPin, Plus, Trash2, Radio } from "lucide-react"
+import { CloudSun, Thermometer, Droplets, Sun, MapPin, Plus, Trash2, Radio } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
 import { Card, Badge, Field, Input, SectionHeading, EmptyState, Select } from "@/components/breeding/ui"
+import { getWeatherForDate } from "@/lib/services/weatherService"
 
 interface Sensor {
   id: string
@@ -28,7 +29,6 @@ interface WeatherData {
   temperature: number | null
   humidity: number | null
   uvIndex: number | null
-  cloudCover: number | null
   location: string
 }
 
@@ -54,24 +54,20 @@ function MeteoContent() {
   }, [])
 
   async function fetchWeather() {
-    if ("geolocation" in navigator) {
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
-          const res = await fetch(
-            `https://api.open-meteo.com/v1/forecast?latitude=${pos.coords.latitude}&longitude=${pos.coords.longitude}&current=temperature_2m,relative_humidity_2m,uv_index,cloud_cover`,
-          )
-          const data = await res.json()
-          setWeather({
-            temperature: data?.current?.temperature_2m ?? null,
-            humidity: data?.current?.relative_humidity_2m ?? null,
-            uvIndex: data?.current?.uv_index ?? null,
-            cloudCover: data?.current?.cloud_cover ?? null,
-            location: "Position GPS",
-          })
-        },
-        () => setWeather(null),
-        { timeout: 5000 },
-      )
+    // Passe par le module météo unique de l'appli : la lecture du jour est
+    // enregistrée dans l'historique (weather_daily) pour être réutilisable
+    // plus tard depuis Croisement, un Lot ou le Module Pollen.
+    const today = new Date().toISOString().split("T")[0]
+    const daily = await getWeatherForDate(today)
+    if (daily) {
+      setWeather({
+        temperature: daily.temperature,
+        humidity: daily.humidity,
+        uvIndex: daily.uv_index,
+        location: daily.location ?? "Zone du profil",
+      })
+    } else {
+      setWeather(null)
     }
   }
 
@@ -127,15 +123,14 @@ function MeteoContent() {
             <CloudSun className="size-5 text-primary" /> Météo extérieure
           </h3>
           {weather ? (
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-3 gap-4">
               <WeatherStat icon={<Thermometer className="size-5" />} label="Température" value={weather.temperature != null ? `${Math.round(weather.temperature)}°C` : "—"} />
               <WeatherStat icon={<Droplets className="size-5" />} label="Humidité" value={weather.humidity != null ? `${Math.round(weather.humidity)}%` : "—"} />
               <WeatherStat icon={<Sun className="size-5" />} label="Indice UV" value={weather.uvIndex != null ? String(Math.round(weather.uvIndex)) : "—"} />
-              <WeatherStat icon={<Cloud className="size-5" />} label="Couverture" value={weather.cloudCover != null ? `${Math.round(weather.cloudCover)}%` : "—"} />
             </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              Géolocalisation indisponible. Renseignez votre ville dans le profil pour le fallback.
+              Localisation indisponible. Renseignez votre ville (ou latitude/longitude) dans le profil : c'est la zone utilisée automatiquement partout dans l'application, il n'y a rien à saisir ailleurs.
             </p>
           )}
           <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
