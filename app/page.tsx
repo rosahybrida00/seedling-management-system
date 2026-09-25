@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react"
 import Link from "next/link"
-import { Search, Plus, Upload, Download, Trash2, Flower2, SlidersHorizontal, Pencil } from "lucide-react"
+import { Search, Plus, Upload, Download, Trash2, Flower2, SlidersHorizontal, Pencil, BookmarkPlus, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
@@ -54,6 +54,7 @@ function CatalogPageContent() {
   const [typeFilters, setTypeFilters] = useState<string[]>([])
   const [colorFilters, setColorFilters] = useState<string[]>([])
   const [editingVariety, setEditingVariety] = useState<VarietyRecord | null>(null)
+  const [collectionIds, setCollectionIds] = useState<Set<string>>(new Set())
   const [newVariety, setNewVariety] = useState({
     name: "",
     commercial_name: "",
@@ -70,7 +71,20 @@ function CatalogPageContent() {
 
   useEffect(() => {
     fetchVarieties()
+    supabase.from("catalog_collection").select("variety_id").then(({ data }) => {
+      setCollectionIds(new Set((data ?? []).map((row) => row.variety_id).filter(Boolean) as string[]))
+    })
   }, [])
+
+  async function toggleCollection(varietyId: string) {
+    if (collectionIds.has(varietyId)) {
+      await supabase.from("catalog_collection").delete().eq("variety_id", varietyId)
+      setCollectionIds((current) => { const next = new Set(current); next.delete(varietyId); return next })
+    } else {
+      const { error } = await supabase.from("catalog_collection").insert({ variety_id: varietyId })
+      if (!error) setCollectionIds((current) => new Set(current).add(varietyId))
+    }
+  }
 
   async function fetchVarieties() {
     setLoading(true)
@@ -376,6 +390,8 @@ function CatalogPageContent() {
                 variety={variety}
                 onEdit={setEditingVariety}
                 onDelete={handleDeleteOne}
+                inCollection={collectionIds.has(variety.id)}
+                onToggleCollection={() => toggleCollection(variety.id)}
               />
             ))}
           </div>
@@ -415,10 +431,14 @@ function VarietyCard({
   variety,
   onEdit,
   onDelete,
+  inCollection,
+  onToggleCollection,
 }: {
   variety: VarietyRecord
   onEdit: (variety: VarietyRecord) => void
   onDelete: (variety: VarietyRecord) => void
+  inCollection: boolean
+  onToggleCollection: () => void
 }) {
   const photo = variety.photo_url ?? variety.image_url ?? null
   const detected = useMemo(() => detectTraitsFromDescription(variety.description), [variety.description])
@@ -479,6 +499,16 @@ function VarietyCard({
           </div>
         </Card>
       </Link>
+
+      <button
+        type="button"
+        onClick={(event) => { event.preventDefault(); event.stopPropagation(); onToggleCollection() }}
+        className="absolute right-2 bottom-2 inline-flex items-center gap-1.5 rounded-md bg-background/95 px-2.5 py-1.5 text-xs font-medium text-foreground shadow-sm transition-colors hover:bg-background"
+        aria-label={inCollection ? `Retirer ${variety.name} de ma collection` : `Ajouter ${variety.name} à ma collection`}
+      >
+        {inCollection ? <Check data-icon="inline-start" /> : <BookmarkPlus data-icon="inline-start" />}
+        {inCollection ? "Dans ma collection" : "Ajouter à ma collection"}
+      </button>
 
       <div className="absolute left-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <button

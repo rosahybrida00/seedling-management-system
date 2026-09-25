@@ -1,7 +1,7 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
-import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2, Pencil, Check, X, FileText, ArrowUpCircle } from "lucide-react"
+import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2, Pencil, Check, X, FileText, ArrowUpCircle, BookmarkPlus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
@@ -107,6 +107,7 @@ function SerreContent() {
   const [statusFilter, setStatusFilter] = useState("")
   const [greenhouseFilter, setGreenhouseFilter] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
+  const [collectionIds, setCollectionIds] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     fetchData()
@@ -126,7 +127,19 @@ function SerreContent() {
     if (cr.data) setCrosses(cr.data as CrossInfo[])
     if (tbl.data) setTables(tbl.data as GreenhouseTable[])
     if (gh.data) setGreenhouses(gh.data as Greenhouse[])
+    const { data: collection } = await supabase.from("catalog_collection").select("seedling_id")
+    setCollectionIds(new Set((collection ?? []).map((row) => row.seedling_id).filter(Boolean) as string[]))
     setLoading(false)
+  }
+
+  async function toggleCollection(seedlingId: string) {
+    if (collectionIds.has(seedlingId)) {
+      await supabase.from("catalog_collection").delete().eq("seedling_id", seedlingId)
+      setCollectionIds((current) => { const next = new Set(current); next.delete(seedlingId); return next })
+    } else {
+      const { error } = await supabase.from("catalog_collection").insert({ seedling_id: seedlingId })
+      if (!error) setCollectionIds((current) => new Set(current).add(seedlingId))
+    }
   }
 
   // Un lot de semis (sowing_batches) est retrouvé par couple/fruit plutôt
@@ -334,6 +347,8 @@ function SerreContent() {
                 onSave={(changes) => updateSeedling(s, changes)}
                 onDelete={() => deleteSeedling(s.id)}
                 onPromote={() => promoteToVariety(s)}
+                inCollection={collectionIds.has(s.id)}
+                onToggleCollection={() => toggleCollection(s.id)}
               />
             )
           })}
@@ -355,6 +370,8 @@ function SeedlingCard({
   onSave,
   onDelete,
   onPromote,
+  inCollection,
+  onToggleCollection,
 }: {
   seedling: Seedling
   cross: CrossInfo | null
@@ -367,6 +384,8 @@ function SeedlingCard({
   onSave: (changes: Partial<Seedling>) => void
   onDelete: () => void
   onPromote: () => void
+  inCollection: boolean
+  onToggleCollection: () => void
 }) {
   const currentEvaluationStatus = seedling.evaluation_status ?? legacyStatusToEvaluation(seedling.status)
 
@@ -532,6 +551,15 @@ function SeedlingCard({
           {EVALUATION_STATUS_LABELS[currentEvaluationStatus] ?? currentEvaluationStatus}
         </Badge>
         {seedling.is_promoted_to_variety ? <Badge tone="success">Promu au catalogue général</Badge> : null}
+        <Button
+          size="sm"
+          variant={inCollection ? "secondary" : "outline"}
+          onClick={onToggleCollection}
+          className="gap-1"
+          aria-label={inCollection ? `Retirer ${displayCode} de ma collection` : `Ajouter ${displayCode} à ma collection`}
+        >
+          <BookmarkPlus className="size-3.5" /> {inCollection ? "Dans ma collection" : "Ajouter à ma collection"}
+        </Button>
         <div className="flex gap-1">
           {!seedling.is_promoted_to_variety && currentEvaluationStatus === "Sélectionné" ? (
             <Button size="sm" variant="outline" onClick={onPromote} className="gap-1">
