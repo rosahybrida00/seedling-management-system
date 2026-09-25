@@ -223,6 +223,47 @@ export interface WeatherData {
   source: "gps" | "profile" | "manual"
 }
 
+/** Localisation plein air et caractéristiques du sol. */
+export interface Parcelle {
+  id: string
+  user_id: string
+  name: string
+  latitude: number | null
+  longitude: number | null
+  city: string | null
+  soil_type: string | null
+  soil_notes: string | null
+  area_m2: number | null
+  remarks: string
+  created_at: string
+  updated_at: string
+}
+
+/** Observation reliée à un sujet, une parcelle et la météo du même jour. */
+export interface OutdoorObservation {
+  id: string
+  user_id: string
+  parcelle_id: string
+  seedling_id: string | null
+  variety_id: string | null
+  observation_date: string
+  weather_daily_id: string
+  observation_type: string
+  notes: string
+  created_at: string
+}
+
+export interface RagAgronomicChainRow extends OutdoorObservation {
+  parcelle_name: string
+  soil_type: string | null
+  latitude: number | null
+  longitude: number | null
+  weather_location: string | null
+  temperature: number | null
+  humidity: number | null
+  uv_index: number | null
+}
+
 // --- Phase 2: Labels pour les cases à cocher contextuelles ---
 
 export const ANTHER_QUALITY_LABELS: Record<string, string> = {

@@ -618,7 +618,7 @@ function InlineDate({ value, onSave, textClassName }: { value: string | null; on
         value={draft}
         onClick={(e) => e.stopPropagation()}
         onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => { setEditing(false); onSave(fromDateInput(draft)) }}
+        onBlur={() => { setEditing(false); const parsed = fromDateInput(draft); if (parsed) onSave(parsed) }}
         onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); if (e.key === "Escape") setEditing(false) }}
         className="h-7 w-36 px-2 text-xs"
       />

@@ -42,6 +42,8 @@ export interface Entity {
  * `code` est la clé stable métier (ex. "A").
  */
 export interface Cross extends Entity {
+  /** Clé métier stable affichée et utilisée par les upserts JSON. */
+  code: string
   /** Racine stable du couple de parents, sans numéro de lot. */
   root: string
   /** Parent femelle (porte-graine). */
@@ -80,7 +82,7 @@ export interface CrossFruit extends Entity {
 }
 
 export interface EventLog extends Entity {
-  type: "action" | "weather_alert"
+  type: "action" | "weather_alert" | "lot.created" | "fruit.updated"
   label: string
   payload: Record<string, unknown>
 }
