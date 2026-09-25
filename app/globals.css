@@ -50,8 +50,8 @@
 :root {
   color-scheme: light;
   /* Palette carnet horticole : vert botanique + neutres chauds + accent rose */
-  --background: oklch(0.985 0.006 120);
-  --foreground: oklch(0.24 0.02 150);
+  --background: oklch(0.975 0.008 105);
+  --foreground: oklch(0.22 0.025 150);
   --card: oklch(1 0.004 120);
   --card-foreground: oklch(0.24 0.02 150);
   --popover: oklch(1 0.004 120);

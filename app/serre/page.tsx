@@ -15,6 +15,7 @@ import {
   CRITERE_SELECTION_LABELS,
 } from "@/lib/domain/supabase-types"
 import type { Seedling } from "@/lib/domain/supabase-types"
+import { FieldObservatory } from "@/components/breeding/field-observatory"
 
 // ---------------------------------------------------------------------------
 // Un semis (seedling) porte désormais directement `cross_id`, `fruit_code`,
@@ -269,6 +270,7 @@ function SerreContent() {
 
   return (
     <div className="flex flex-col gap-5">
+      <FieldObservatory />
       <SectionHeading
         title="Catalogue des Semis"
         description="Évaluation des individus issus des graines récoltées : phénotype, pression sanitaire, sélection et synthèse automatique. Indépendant du Catalogue Général."
