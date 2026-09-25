@@ -1,9 +1,9 @@
 "use client"
 
 import { useEffect, useMemo, useState } from "react"
-import { ClipboardCheck, CloudSun, Leaf, MapPin, Save } from "lucide-react"
+import { Bell, ClipboardCheck, CloudSun, Leaf, MapPin, Plus, Save, Send } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { Card, Field, Input, Select, SectionHeading } from "./ui"
+import { Card, Field, Input, Select, SectionHeading, Textarea } from "./ui"
 import { supabase } from "@/lib/supabase-client"
 
 const CHECKLISTS = {
@@ -32,6 +32,11 @@ export function FieldObservatory() {
   const [passages, setPassages] = useState("1")
   const [result, setResult] = useState("Amélioration")
   const [saved, setSaved] = useState(false)
+  const [newLocationName, setNewLocationName] = useState("")
+  const [unknownVariety, setUnknownVariety] = useState("")
+  const [requestContext, setRequestContext] = useState("")
+  const [requestSent, setRequestSent] = useState(false)
+  const [locationMessage, setLocationMessage] = useState("")
 
   useEffect(() => {
     async function load() {
@@ -57,6 +62,32 @@ export function FieldObservatory() {
 
   const weatherForDate = useMemo(() => weather.filter((day) => day.date === observationDate), [weather, observationDate])
   const toggle = (value: string) => setSelected((current) => current.includes(value) ? current.filter((item) => item !== value) : [...current, value])
+
+  async function addLocation() {
+    const name = newLocationName.trim()
+    if (!name) return
+    const table = locationKind === "greenhouse" ? "greenhouses" : "parcelles"
+    const { data, error } = await supabase.from(table).insert({ name }).select("id, name").single()
+    if (!error && data) {
+      setLocations((current) => [...current, { id: data.id, label: `${data.name} · ${locationKind === "greenhouse" ? "Serre" : "Parcelle"}` }])
+      setLocationId(data.id)
+      setNewLocationName("")
+      setLocationMessage(`${locationKind === "greenhouse" ? "Serre" : "Parcelle"} ajoutée.`)
+    }
+  }
+
+  async function submitVarietyRequest() {
+    const requestedName = unknownVariety.trim()
+    if (!requestedName) return
+    const { data: request, error } = await supabase.from("catalog_variety_requests").insert({ requested_name: requestedName, context: requestContext.trim(), source: "unknown_variety" }).select("id").single()
+    if (!error && request) {
+      await supabase.from("admin_alerts").insert({ alert_type: "catalog_request", title: `Nouvelle variété à vérifier : ${requestedName}`, payload: { request_id: request.id, requested_name: requestedName } })
+      setUnknownVariety("")
+      setRequestContext("")
+      setRequestSent(true)
+      window.setTimeout(() => setRequestSent(false), 2800)
+    }
+  }
 
   async function save() {
     if (!varietyId || !locationId || !weatherId) return
@@ -109,8 +140,30 @@ export function FieldObservatory() {
             <Button onClick={save} disabled={!varietyId || !locationId || !weatherId} className="gap-2"><Save data-icon="inline-start" />{saved ? "Relevé enregistré" : "Enregistrer le relevé"}</Button>
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1"><Leaf className="size-3.5" />Chaînage variété / semis</span><span className="inline-flex items-center gap-1"><MapPin className="size-3.5" />Emplacement stable</span><span className="inline-flex items-center gap-1"><ClipboardCheck className="size-3.5" />Observation + intervention datées</span></div>
+        <div className="mt-4 flex flex-wrap gap-2 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1"><Leaf className="size-3.5" />Catalogue général + semis</span><span className="inline-flex items-center gap-1"><MapPin className="size-3.5" />Serres et parcelles</span><span className="inline-flex items-center gap-1"><ClipboardCheck className="size-3.5" />Observation + traitement datés</span></div>
       </Card>
+
+      <div className="grid gap-5 lg:grid-cols-2">
+        <Card className="p-5">
+          <SectionHeading title="Ajouter un emplacement" description="Créez une serre chaude, serre froide ou parcelle directement depuis l’observatoire." />
+          <div className="mt-4 grid gap-3 sm:grid-cols-[180px_1fr_auto] sm:items-end">
+            <Field label="Type" htmlFor="new-location-kind"><Select id="new-location-kind" value={locationKind} onChange={(event) => setLocationKind(event.target.value as typeof locationKind)}><option value="greenhouse">Serre</option><option value="parcelle">Parcelle</option></Select></Field>
+            <Field label="Nom" htmlFor="new-location-name"><Input id="new-location-name" value={newLocationName} onChange={(event) => setNewLocationName(event.target.value)} placeholder="Serre froide 02 / Parcelle Nord" /></Field>
+            <Button type="button" onClick={addLocation} disabled={!newLocationName.trim()} className="gap-2"><Plus data-icon="inline-start" />Ajouter</Button>
+          </div>
+          {locationMessage && <p className="mt-3 text-sm text-primary">{locationMessage}</p>}
+        </Card>
+
+        <Card className="p-5">
+          <SectionHeading title="Variété manquante ?" description="Une demande crée automatiquement une alerte pour l’administration du catalogue." />
+          <div className="mt-4 grid gap-3">
+            <Field label="Nom de la variété" htmlFor="unknown-variety"><Input id="unknown-variety" value={unknownVariety} onChange={(event) => setUnknownVariety(event.target.value)} placeholder="Nom ou code connu sur le terrain" /></Field>
+            <Field label="Contexte" htmlFor="request-context"><Textarea id="request-context" value={requestContext} onChange={(event) => setRequestContext(event.target.value)} placeholder="Origine, fournisseur, photo ou remarque utile…" /></Field>
+            <Button type="button" variant="outline" onClick={submitVarietyRequest} disabled={!unknownVariety.trim()} className="w-fit gap-2"><Send data-icon="inline-start" />{requestSent ? "Demande envoyée" : "Envoyer à l’administration"}</Button>
+          </div>
+          <p className="mt-3 flex items-center gap-2 text-xs text-muted-foreground"><Bell className="size-3.5" />La variété reste en attente de validation avant son ajout au catalogue général.</p>
+        </Card>
+      </div>
     </div>
   )
 }
