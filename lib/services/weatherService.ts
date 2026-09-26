@@ -74,12 +74,23 @@ async function resolveLocation(): Promise<{ lat: number; lon: number; name: stri
 /**
  * Retourne la météo (température, humidité, UV) d'une date donnée, en
  * consultant d'abord l'historique de l'application (weather_daily). Si
- * elle n'y est pas encore, elle est interrogée (temps réel pour
- * aujourd'hui, archive sinon) puis mise en cache pour les prochains
- * enregistrements de croisement, de lot ou de lot de pollen sur la même
- * date. Retourne null si la localisation n'est pas connue ou la requête
- * échoue — l'appelant doit alors laisser les champs météo vides plutôt
- * que d'en inventer.
+ * elle n'y est pas encore, elle est interrogée puis mise en cache pour
+ * les prochains enregistrements de croisement, de lot ou de lot de
+ * pollen sur la même date.
+ *
+ * Important : pour une date passée, il ne s'agit jamais d'une valeur
+ * inventée. Open-Meteo republie de vraies mesures/réanalyses météo
+ * (stations + satellites) pour n'importe quelle date passée, y compris
+ * bien avant la création de ce projet — exactement comme n'importe quel
+ * site météo qui affiche "le temps qu'il faisait à Paris le 12 juin
+ * 2019". "Enregistrer" ici ne veut dire que "mettre en cache ce relevé
+ * réel" pour ne pas le redemander à chaque fois.
+ *
+ * Limite connue : l'indice UV n'est fourni par Open-Meteo que pour
+ * aujourd'hui et les ~3 derniers mois (API prévision/récente). Au-delà,
+ * seule l'archive historique complète est disponible, et elle ne fournit
+ * pas d'indice UV. Dans ce cas, uv_index reste `null` volontairement,
+ * plutôt que d'être deviné.
  */
 export async function getWeatherForDate(date: string): Promise<DailyWeather | null> {
   const { data: authData } = await supabase.auth.getUser()
@@ -97,10 +108,17 @@ export async function getWeatherForDate(date: string): Promise<DailyWeather | nu
   if (!place) return null
 
   const isToday = date === todayStr()
+  const daysAgo = Math.floor((Date.parse(todayStr()) - Date.parse(date)) / 86400000)
+  // L'API prévision d'Open-Meteo republie aussi les ~92 derniers jours,
+  // UV inclus ; au-delà, seule l'archive historique complète (sans UV)
+  // est disponible.
+  const withinRecentRange = daysAgo >= 0 && daysAgo <= 90
+
   try {
     let temperature: number | null = null
     let humidity: number | null = null
     let uv: number | null = null
+    let source: "live" | "archive" = "archive"
 
     if (isToday) {
       const res = await fetch(
@@ -110,22 +128,31 @@ export async function getWeatherForDate(date: string): Promise<DailyWeather | nu
       temperature = data?.current?.temperature_2m ?? null
       humidity = data?.current?.relative_humidity_2m ?? null
       uv = data?.current?.uv_index ?? null
-    } else {
+      source = "live"
+    } else if (withinRecentRange) {
       const res = await fetch(
-        `https://archive-api.open-meteo.com/v1/archive?latitude=${place.lat}&longitude=${place.lon}&start_date=${date}&end_date=${date}&daily=temperature_2m_mean,relative_humidity_2m_mean,uv_index_max&timezone=auto`,
+        `https://api.open-meteo.com/v1/forecast?latitude=${place.lat}&longitude=${place.lon}&start_date=${date}&end_date=${date}&daily=temperature_2m_mean,relative_humidity_2m_mean,uv_index_max&timezone=auto`,
       )
       const data = await res.json()
       temperature = data?.daily?.temperature_2m_mean?.[0] ?? null
       humidity = data?.daily?.relative_humidity_2m_mean?.[0] ?? null
       uv = data?.daily?.uv_index_max?.[0] ?? null
+      source = "archive"
+    } else {
+      const res = await fetch(
+        `https://archive-api.open-meteo.com/v1/archive?latitude=${place.lat}&longitude=${place.lon}&start_date=${date}&end_date=${date}&daily=temperature_2m_mean,relative_humidity_2m_mean&timezone=auto`,
+      )
+      const data = await res.json()
+      temperature = data?.daily?.temperature_2m_mean?.[0] ?? null
+      humidity = data?.daily?.relative_humidity_2m_mean?.[0] ?? null
+      uv = null // Non fourni par l'archive historique complète.
+      source = "archive"
     }
 
-    const record: DailyWeather = {
-      date, temperature, humidity, uv_index: uv, location: place.name, source: isToday ? "live" : "archive",
-    }
+    const record: DailyWeather = { date, temperature, humidity, uv_index: uv, location: place.name, source }
 
     await supabase.from("weather_daily").upsert(
-      { user_id: authData.user.id, date, temperature, humidity, uv_index: uv, location: place.name, source: record.source },
+      { user_id: authData.user.id, date, temperature, humidity, uv_index: uv, location: place.name, source },
       { onConflict: "user_id,date" },
     )
 

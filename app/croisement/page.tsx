@@ -211,6 +211,8 @@ function CroisementContent() {
   const [pollenSuggestions, setPollenSuggestions] = useState<VarietySuggestion[]>([])
   const [showSeedSugg, setShowSeedSugg] = useState(false)
   const [showPollenSugg, setShowPollenSugg] = useState(false)
+  const [seedHighlight, setSeedHighlight] = useState(-1)
+  const [pollenHighlight, setPollenHighlight] = useState(-1)
 
   useEffect(() => {
     fetchData()
@@ -234,17 +236,22 @@ function CroisementContent() {
 
   useEffect(() => {
     const query = form.seedParent.trim()
+    // Une variété vient d'être sélectionnée dans la liste : ne pas relancer
+    // une recherche derrière (c'est ce qui obligeait à cliquer deux fois
+    // pour faire disparaître la suggestion).
+    if (form.seedParentId) { setShowSeedSugg(false); return }
     if (query.length < 1) { setSeedSuggestions([]); setShowSeedSugg(false); return }
-    const timer = setTimeout(async () => { setSeedSuggestions(await searchParents(query)); setShowSeedSugg(true) }, 200)
+    const timer = setTimeout(async () => { setSeedSuggestions(await searchParents(query)); setShowSeedSugg(true); setSeedHighlight(-1) }, 200)
     return () => clearTimeout(timer)
-  }, [form.seedParent])
+  }, [form.seedParent, form.seedParentId])
 
   useEffect(() => {
     const query = form.pollenParent.trim()
+    if (form.pollenParentId) { setShowPollenSugg(false); return }
     if (query.length < 1) { setPollenSuggestions([]); setShowPollenSugg(false); return }
-    const timer = setTimeout(async () => { setPollenSuggestions(await searchParents(query)); setShowPollenSugg(true) }, 200)
+    const timer = setTimeout(async () => { setPollenSuggestions(await searchParents(query)); setShowPollenSugg(true); setPollenHighlight(-1) }, 200)
     return () => clearTimeout(timer)
-  }, [form.pollenParent])
+  }, [form.pollenParent, form.pollenParentId])
 
   // Météo automatique du module Météo (historique quotidien de l'appli),
   // jamais interrogée en direct depuis ce formulaire.
@@ -540,6 +547,8 @@ function CroisementContent() {
                 seedSuggestions={seedSuggestions} pollenSuggestions={pollenSuggestions}
                 showSeedSugg={showSeedSugg} showPollenSugg={showPollenSugg}
                 setShowSeedSugg={setShowSeedSugg} setShowPollenSugg={setShowPollenSugg}
+                seedHighlight={seedHighlight} setSeedHighlight={setSeedHighlight}
+                pollenHighlight={pollenHighlight} setPollenHighlight={setPollenHighlight}
                 pollenLots={pollenLots} pollinationWeather={pollinationWeather} weatherLoading={weatherLoading}
                 onCancel={() => setCreating(false)}
                 onSubmit={createLot}
@@ -638,15 +647,27 @@ function InlineDate({ value, onSave, textClassName }: { value: string | null; on
 
 function LotForm({
   form, setForm, lockParents, seedSuggestions, pollenSuggestions, showSeedSugg, showPollenSugg,
-  setShowSeedSugg, setShowPollenSugg, pollenLots, pollinationWeather, weatherLoading, onCancel, onSubmit,
+  setShowSeedSugg, setShowPollenSugg, seedHighlight, setSeedHighlight, pollenHighlight, setPollenHighlight,
+  pollenLots, pollinationWeather, weatherLoading, onCancel, onSubmit,
 }: {
   form: any; setForm: (updater: any) => void; lockParents: boolean
   seedSuggestions: VarietySuggestion[]; pollenSuggestions: VarietySuggestion[]
   showSeedSugg: boolean; showPollenSugg: boolean
   setShowSeedSugg: (v: boolean) => void; setShowPollenSugg: (v: boolean) => void
+  seedHighlight: number; setSeedHighlight: (v: number) => void
+  pollenHighlight: number; setPollenHighlight: (v: number) => void
   pollenLots: PollenLot[]; pollinationWeather: DailyWeather | null; weatherLoading: boolean
   onCancel: () => void; onSubmit: () => void
 }) {
+  function selectSeed(s: VarietySuggestion) {
+    setForm({ ...form, seedParent: s.name, seedParentId: s.id })
+    setShowSeedSugg(false)
+  }
+  function selectPollen(s: VarietySuggestion) {
+    setForm({ ...form, pollenParent: s.name, pollenParentId: s.id })
+    setShowPollenSugg(false)
+  }
+
   return (
     <Card className="p-4">
       <button onClick={onCancel} className="mb-3 flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
@@ -659,13 +680,30 @@ function LotForm({
         {!lockParents ? (
           <>
             <div className="relative">
-              <Field label="Parent porte-graine (♀)">
-                <Input value={form.seedParent} onChange={(e) => setForm({ ...form, seedParent: e.target.value, seedParentId: "" })} onFocus={() => { if (seedSuggestions.length > 0) setShowSeedSugg(true) }} placeholder="Ex: Grande Amore..." />
+              <Field label="Parent porte-graine (♀)" hint="Flèche bas puis Entrée, ou cliquez sur une suggestion">
+                <Input
+                  value={form.seedParent}
+                  onChange={(e) => setForm({ ...form, seedParent: e.target.value, seedParentId: "" })}
+                  onFocus={() => { if (seedSuggestions.length > 0) setShowSeedSugg(true) }}
+                  onKeyDown={(e) => {
+                    if (!showSeedSugg || seedSuggestions.length === 0) return
+                    if (e.key === "ArrowDown") { e.preventDefault(); setSeedHighlight(Math.min(seedHighlight + 1, seedSuggestions.length - 1)) }
+                    else if (e.key === "ArrowUp") { e.preventDefault(); setSeedHighlight(Math.max(seedHighlight - 1, 0)) }
+                    else if (e.key === "Enter" && seedHighlight >= 0) { e.preventDefault(); selectSeed(seedSuggestions[seedHighlight]) }
+                    else if (e.key === "Escape") { setShowSeedSugg(false) }
+                  }}
+                  placeholder="Ex: Grande Amore..."
+                />
               </Field>
               {showSeedSugg && seedSuggestions.length > 0 ? (
                 <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
-                  {seedSuggestions.map((s) => (
-                    <div key={s.id} className="cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground" onClick={() => { setForm({ ...form, seedParent: s.name, seedParentId: s.id }); setShowSeedSugg(false) }}>
+                  {seedSuggestions.map((s, i) => (
+                    <div
+                      key={s.id}
+                      className={i === seedHighlight ? "cursor-pointer bg-accent px-3 py-2 text-xs text-accent-foreground" : "cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground"}
+                      onMouseEnter={() => setSeedHighlight(i)}
+                      onClick={() => selectSeed(s)}
+                    >
                       <span className="font-medium text-foreground">{s.name}</span>
                       {s.commercial_name && s.commercial_name !== s.name ? <span className="text-muted-foreground"> ({s.commercial_name})</span> : null}
                     </div>
@@ -674,13 +712,30 @@ function LotForm({
               ) : null}
             </div>
             <div className="relative">
-              <Field label="Parent pollen (♂)">
-                <Input value={form.pollenParent} onChange={(e) => setForm({ ...form, pollenParent: e.target.value, pollenParentId: "" })} onFocus={() => { if (pollenSuggestions.length > 0) setShowPollenSugg(true) }} placeholder="Ex: Black Baccara..." />
+              <Field label="Parent pollen (♂)" hint="Flèche bas puis Entrée, ou cliquez sur une suggestion">
+                <Input
+                  value={form.pollenParent}
+                  onChange={(e) => setForm({ ...form, pollenParent: e.target.value, pollenParentId: "" })}
+                  onFocus={() => { if (pollenSuggestions.length > 0) setShowPollenSugg(true) }}
+                  onKeyDown={(e) => {
+                    if (!showPollenSugg || pollenSuggestions.length === 0) return
+                    if (e.key === "ArrowDown") { e.preventDefault(); setPollenHighlight(Math.min(pollenHighlight + 1, pollenSuggestions.length - 1)) }
+                    else if (e.key === "ArrowUp") { e.preventDefault(); setPollenHighlight(Math.max(pollenHighlight - 1, 0)) }
+                    else if (e.key === "Enter" && pollenHighlight >= 0) { e.preventDefault(); selectPollen(pollenSuggestions[pollenHighlight]) }
+                    else if (e.key === "Escape") { setShowPollenSugg(false) }
+                  }}
+                  placeholder="Ex: Black Baccara..."
+                />
               </Field>
               {showPollenSugg && pollenSuggestions.length > 0 ? (
                 <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
-                  {pollenSuggestions.map((s) => (
-                    <div key={s.id} className="cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground" onClick={() => { setForm({ ...form, pollenParent: s.name, pollenParentId: s.id }); setShowPollenSugg(false) }}>
+                  {pollenSuggestions.map((s, i) => (
+                    <div
+                      key={s.id}
+                      className={i === pollenHighlight ? "cursor-pointer bg-accent px-3 py-2 text-xs text-accent-foreground" : "cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground"}
+                      onMouseEnter={() => setPollenHighlight(i)}
+                      onClick={() => selectPollen(s)}
+                    >
                       <span className="font-medium text-foreground">{s.name}</span>
                       {s.commercial_name && s.commercial_name !== s.name ? <span className="text-muted-foreground"> ({s.commercial_name})</span> : null}
                     </div>
@@ -769,7 +824,7 @@ function LotForm({
           <div className="flex flex-wrap gap-1.5">
             {pollinationWeather.temperature != null ? <Badge tone="neutral">{Math.round(pollinationWeather.temperature)}°C</Badge> : null}
             {pollinationWeather.humidity != null ? <Badge tone="neutral">{Math.round(pollinationWeather.humidity)}% hum.</Badge> : null}
-            {pollinationWeather.uv_index != null ? <Badge tone="neutral">UV {Math.round(pollinationWeather.uv_index)}</Badge> : null}
+            {pollinationWeather.uv_index != null ? <Badge tone="neutral">UV {Math.round(pollinationWeather.uv_index)}</Badge> : <Badge tone="neutral">UV indisponible pour cette date ancienne</Badge>}
             <Badge tone="neutral">{pollinationWeather.source === "live" ? "Temps réel" : "Historique"}</Badge>
           </div>
         ) : (
@@ -831,6 +886,7 @@ function CoupleFocusView({
           form={lotForm} setForm={setLotForm} lockParents
           seedSuggestions={[]} pollenSuggestions={[]} showSeedSugg={false} showPollenSugg={false}
           setShowSeedSugg={() => {}} setShowPollenSugg={() => {}}
+          seedHighlight={-1} setSeedHighlight={() => {}} pollenHighlight={-1} setPollenHighlight={() => {}}
           pollenLots={pollenLots} pollinationWeather={pollinationWeather} weatherLoading={weatherLoading}
           onCancel={onCancelAddLot} onSubmit={onSubmitLot}
         />
@@ -1318,7 +1374,7 @@ function PollenPanel({ pollenLots, onRefresh }: { pollenLots: PollenLot[]; onRef
               <div className="flex flex-wrap gap-1.5">
                 {harvestWeather.temperature != null ? <Badge tone="neutral">{Math.round(harvestWeather.temperature)}°C</Badge> : null}
                 {harvestWeather.humidity != null ? <Badge tone="neutral">{Math.round(harvestWeather.humidity)}% hum.</Badge> : null}
-                {harvestWeather.uv_index != null ? <Badge tone="neutral">UV {Math.round(harvestWeather.uv_index)}</Badge> : null}
+                {harvestWeather.uv_index != null ? <Badge tone="neutral">UV {Math.round(harvestWeather.uv_index)}</Badge> : <Badge tone="neutral">UV indisponible pour cette date ancienne</Badge>}
               </div>
             ) : (
               <p className="text-xs text-muted-foreground">Météo indisponible pour cette date.</p>
