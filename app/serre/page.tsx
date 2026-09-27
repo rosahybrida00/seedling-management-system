@@ -1,11 +1,11 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
-import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2, Pencil, Check, X, FileText, ArrowUpCircle, BookmarkPlus } from "lucide-react"
+import { Search, Download, Trash2, Sprout, Leaf, Warehouse, Table2, Pencil, Check, X, FileText, ArrowUpCircle, BookmarkPlus, Plus } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
 import { supabase } from "@/lib/supabase-client"
-import { Card, Badge, EmptyState, Field, Select, SectionHeading, Textarea } from "@/components/breeding/ui"
+import { Card, Badge, EmptyState, Field, Input, Select, SectionHeading, Textarea } from "@/components/breeding/ui"
 import { formatDate } from "@/components/breeding/format"
 import {
   PHENOTYPE_LABELS,
@@ -108,6 +108,8 @@ function SerreContent() {
   const [greenhouseFilter, setGreenhouseFilter] = useState("")
   const [editingId, setEditingId] = useState<string | null>(null)
   const [collectionIds, setCollectionIds] = useState<Set<string>>(new Set())
+  const [newGreenhouseName, setNewGreenhouseName] = useState("")
+  const [greenhouseError, setGreenhouseError] = useState<string | null>(null)
 
   useEffect(() => {
     fetchData()
@@ -206,6 +208,19 @@ function SerreContent() {
     })
   }, [seedlings, query, statusFilter, greenhouseFilter, crossMap, batchByFruit, batchById, tableMap])
 
+  async function createGreenhouse() {
+    const name = newGreenhouseName.trim()
+    if (!name) return
+    setGreenhouseError(null)
+    const { error } = await supabase.from("greenhouses").insert({ name })
+    if (error) {
+      setGreenhouseError(`Enregistrement impossible : ${error.message}`)
+      return
+    }
+    setNewGreenhouseName("")
+    await fetchData()
+  }
+
   async function updateSeedling(s: Seedling, changes: Partial<Seedling>) {
     await supabase.from("seedlings").update(changes).eq("id", s.id)
     fetchData()
@@ -284,6 +299,42 @@ function SerreContent() {
   return (
     <div className="flex flex-col gap-5">
       <FieldObservatory />
+      <Card className="flex flex-wrap items-end gap-3 p-4">
+        <Field label="Nouvelle serre" htmlFor="new-greenhouse-name">
+          <Input
+            id="new-greenhouse-name"
+            value={newGreenhouseName}
+            onChange={(e) => setNewGreenhouseName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.nativeEvent.isComposing && e.keyCode !== 229) createGreenhouse()
+            }}
+            placeholder="Serre nord"
+            className="w-64"
+          />
+        </Field>
+        <Button onClick={createGreenhouse} disabled={!newGreenhouseName.trim()} className="gap-1.5">
+          <Plus className="size-4" data-icon="inline-start" /> Ajouter la serre
+        </Button>
+        {greenhouseError ? <p className="basis-full text-sm text-destructive">{greenhouseError}</p> : null}
+      </Card>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {greenhouses.map((greenhouse) => {
+          const plantCount = seedlings.filter((seedling) => seedlingGreenhouseId(seedling) === greenhouse.id).length
+          return (
+            <Card key={greenhouse.id} className="p-4">
+              <div className="flex items-center gap-3">
+                <span className="flex size-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                  <Warehouse className="size-5" />
+                </span>
+                <div>
+                  <h2 className="font-serif text-lg text-foreground">{greenhouse.name}</h2>
+                  <p className="text-sm text-muted-foreground">{plantCount} plant(s) · {tables.filter((table) => table.greenhouse_id === greenhouse.id).length} table(s)</p>
+                </div>
+              </div>
+            </Card>
+          )
+        })}
+      </div>
       <SectionHeading
         title="Catalogue des Semis"
         description="Évaluation des individus issus des graines récoltées : phénotype, pression sanitaire, sélection et synthèse automatique. Indépendant du Catalogue Général."
