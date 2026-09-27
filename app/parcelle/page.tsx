@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import {
   Plus, Warehouse, Table2, Sprout, ArrowLeft, Trash2, CalendarClock, ClipboardList, MapPin,
-  Zap, Check, Circle, Flower2, Settings,
+  Zap, Check, Circle, Flower2, Settings, ArrowUpCircle,
 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { AppShell } from "@/components/layout/app-shell"
@@ -239,11 +239,12 @@ function ParcelleContent() {
       ) : null}
 
       {view === "plant" && currentPlanting ? (
-        <PlantView
+          <PlantView
           planting={currentPlanting} label={plantingLabel(currentPlanting)}
           observations={observationsByPlanting.get(currentPlanting.id) ?? []}
           programs={programsByPlanting.get(currentPlanting.id) ?? []}
           interventionsByProgram={interventionsByProgram}
+          greenhouses={greenhouses} tables={tables} parcelles={parcelles}
           onBack={() => { setView("zone"); setPlantingId(null) }}
           onRefresh={fetchData}
         />
@@ -528,12 +529,27 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
 // Carte du plant : 3 onglets — Historique, Agenda individuel, Croisement.
 // ---------------------------------------------------------------------------
 
-function PlantView({ planting, label, observations, programs, interventionsByProgram, onBack, onRefresh }: {
+function PlantView({ planting, label, observations, programs, interventionsByProgram, greenhouses, tables, parcelles, onBack, onRefresh }: {
   planting: FieldPlanting; label: string; observations: FieldObservation[]; programs: FieldProgram[]
-  interventionsByProgram: Map<string, FieldIntervention[]>
+  interventionsByProgram: Map<string, FieldIntervention[]>; greenhouses: Greenhouse[]; tables: GreenhouseTable[]; parcelles: Parcelle[]
   onBack: () => void; onRefresh: () => void
 }) {
-  const [tab, setTab] = useState<"historique" | "agenda" | "croisement">("historique")
+  const [tab, setTab] = useState<"historique" | "agenda" | "croisement" | "transfert">("historique")
+  const [destination, setDestination] = useState("")
+  const [moving, setMoving] = useState(false)
+
+  async function transferPlanting() {
+    if (!destination) return
+    setMoving(true)
+    const isGreenhouse = destination.startsWith("serre:")
+    const id = destination.slice(destination.indexOf(":") + 1)
+    const { error } = await supabase.from("field_plantings").update({ greenhouse_table_id: isGreenhouse ? id : null, parcelle_id: isGreenhouse ? null : id }).eq("id", planting.id)
+    setMoving(false)
+    if (error) { alert(`Transfert impossible : ${error.message}`); return }
+    setDestination("")
+    onRefresh()
+    onBack()
+  }
 
   return (
     <div className="flex flex-col gap-4">
@@ -544,11 +560,29 @@ function PlantView({ planting, label, observations, programs, interventionsByPro
         <button onClick={() => setTab("historique")} className={tab === "historique" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}><CalendarClock className="size-4" /> Historique</button>
         <button onClick={() => setTab("agenda")} className={tab === "agenda" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}><ClipboardList className="size-4" /> Agenda</button>
         <button onClick={() => setTab("croisement")} className={tab === "croisement" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}><Flower2 className="size-4" /> Croisement</button>
+        <button onClick={() => setTab("transfert")} className={tab === "transfert" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}><ArrowUpCircle className="size-4" /> Transférer</button>
       </div>
 
       {tab === "historique" ? <ObservationsSection plantingId={planting.id} observations={observations} onRefresh={onRefresh} /> : null}
       {tab === "agenda" ? <AgendaSection plantingId={planting.id} programs={programs} interventionsByProgram={interventionsByProgram} onRefresh={onRefresh} /> : null}
       {tab === "croisement" ? <CroisementBridge planting={planting} label={label} /> : null}
+      {tab === "transfert" ? (
+        <Card className="flex flex-col gap-4 p-4">
+          <div><h3 className="font-medium text-foreground">Déplacer cette variété ou ce lot</h3><p className="text-sm text-muted-foreground">L&apos;historique sanitaire et l&apos;agenda suivent toujours la carte.</p></div>
+          <Field label="Nouvel emplacement">
+            <Select value={destination} onChange={(e) => setDestination(e.target.value)}>
+              <option value="">-- Choisir une serre ou une parcelle --</option>
+              {greenhouses.map((g) => <optgroup key={g.id} label={`Serre · ${g.name}`}>
+                {tables.filter((t) => t.greenhouse_id === g.id).map((t) => <option key={t.id} value={`serre:${t.id}`}>{t.name}</option>)}
+              </optgroup>)}
+              <optgroup label="Parcelles">
+                {parcelles.map((p) => <option key={p.id} value={`parcelle:${p.id}`}>{p.name}</option>)}
+              </optgroup>
+            </Select>
+          </Field>
+          <Button onClick={transferPlanting} disabled={!destination || moving} className="w-fit gap-1.5">{moving ? "Transfert…" : "Confirmer le transfert"}</Button>
+        </Card>
+      ) : null}
     </div>
   )
 }
@@ -867,7 +901,7 @@ function ManageView({ greenhouses, tables, parcelles, onBack, onRefresh }: {
                   <button onClick={() => deleteParcelle(p.id)} className="ml-auto text-muted-foreground hover:text-destructive"><Trash2 className="size-3.5" /></button>
                 </div>
                 {p.location ? <p className="mt-1 text-xs text-muted-foreground">{p.location}</p> : null}
-                {p.soil_type?.length > 0 ? <div className="mt-1.5 flex flex-wrap gap-1">{p.soil_type.map((s) => <Badge key={s} tone="neutral">{SOIL_TYPE_LABELS[s] ?? s}</Badge>)}</div> : null}
+                {p.soil_type ? <div className="mt-1.5 flex flex-wrap gap-1">{(Array.isArray(p.soil_type) ? p.soil_type : [p.soil_type]).map((s) => <Badge key={s} tone="neutral">{SOIL_TYPE_LABELS[s] ?? s}</Badge>)}</div> : null}
               </Card>
             ))}
           </div>
