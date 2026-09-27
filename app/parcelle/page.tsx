@@ -28,8 +28,21 @@ import { getWeatherForDate, type DailyWeather } from "@/lib/services/weatherServ
 
 interface Greenhouse { id: string; name: string }
 interface GreenhouseTable { id: string; greenhouse_id: string; name: string }
-interface Parcelle { id: string; name: string; soil_type: string[]; location: string | null }
-interface VarietyOption { id: string; name: string; source: "catalogue" | "semis" }
+interface Parcelle { id: string; name: string; soil_type: string | null; location: string | null }
+interface VarietyOption {
+  id: string
+  name: string
+  commercialName?: string | null
+  obtenteur?: string | null
+  type?: string | null
+  color?: string | null
+  flowering?: string | null
+  fragrance?: string | null
+  parents?: string | null
+  description?: string | null
+  photoUrl?: string | null
+  source: "catalogue" | "semis"
+}
 
 interface FieldPlanting {
   id: string
@@ -38,6 +51,9 @@ interface FieldPlanting {
   greenhouse_table_id: string | null
   parcelle_id: string | null
   planted_at: string
+  plant_count?: number | null
+  soil_type?: string | null
+  container_type?: string | null
   notes: string
 }
 
@@ -360,6 +376,11 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
   const [suggestions, setSuggestions] = useState<VarietyOption[]>([])
   const [showSugg, setShowSugg] = useState(false)
   const [tableId, setTableId] = useState("")
+  const [plantCount, setPlantCount] = useState("1")
+  const [soilType, setSoilType] = useState(zone.kind === "parcelle" ? (zone.parcelle.soil_type?.[0] ?? "") : "")
+  const [containerType, setContainerType] = useState("")
+  const [plantedAt, setPlantedAt] = useState(new Date().toISOString().split("T")[0])
+  const [notes, setNotes] = useState("")
 
   const name = zone.kind === "serre" ? zone.greenhouse.name : zone.parcelle.name
   const zoneTables = zone.kind === "serre" ? tables.filter((t) => t.greenhouse_id === zone.greenhouse.id) : []
@@ -371,11 +392,24 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
     const timer = setTimeout(async () => {
       const escaped = q.replace(/[%,()]/g, " ")
       const [{ data: v }, { data: s }] = await Promise.all([
-        supabase.from("varieties").select("id,name,commercial_name").or(`name.ilike.%${escaped}%,commercial_name.ilike.%${escaped}%`).limit(6),
-        supabase.from("seedlings").select("id,code,seedling_code").ilike("code", `%${escaped}%`).limit(6),
+        supabase.from("varieties").select("id,name,commercial_name,obtenteur,type,color,flowering,fragrance,parents,parentage,description,photo_url,image_url").or(`name.ilike.%${escaped}%,commercial_name.ilike.%${escaped}%,obtenteur.ilike.%${escaped}%`).limit(8),
+        supabase.from("seedlings").select("id,code,seedling_code").or(`code.ilike.%${escaped}%,seedling_code.ilike.%${escaped}%`).limit(8),
       ])
       setSuggestions([
-        ...(v ?? []).map((x: any) => ({ id: x.id, name: x.commercial_name || x.name, source: "catalogue" as const })),
+        ...(v ?? []).map((x: any) => ({
+          id: x.id,
+          name: x.commercial_name || x.name,
+          commercialName: x.commercial_name,
+          obtenteur: x.obtenteur,
+          type: x.type,
+          color: x.color,
+          flowering: x.flowering,
+          fragrance: x.fragrance,
+          parents: x.parents || x.parentage,
+          description: x.description,
+          photoUrl: x.photo_url || x.image_url,
+          source: "catalogue" as const,
+        })),
         ...(s ?? []).map((x: any) => ({ id: x.id, name: x.seedling_code || x.code, source: "semis" as const })),
       ])
       setShowSugg(true)
@@ -386,13 +420,19 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
   async function createPlanting() {
     if (!selected) return
     if (zone.kind === "serre" && !tableId) return
-    await supabase.from("field_plantings").insert({
+    const { error } = await supabase.from("field_plantings").insert({
       variety_id: selected.source === "catalogue" ? selected.id : null,
       seedling_id: selected.source === "semis" ? selected.id : null,
       greenhouse_table_id: zone.kind === "serre" ? tableId : null,
       parcelle_id: zone.kind === "parcelle" ? zone.parcelle.id : null,
+      planted_at: plantedAt,
+      plant_count: Math.max(1, Number.parseInt(plantCount, 10) || 1),
+      soil_type: soilType.trim() || null,
+      container_type: containerType.trim() || null,
+      notes: notes.trim(),
     })
-    setQuery(""); setSelected(null); setTableId(""); setCreating(false)
+    if (error) { alert(`Erreur : ${error.message}`); return }
+    setQuery(""); setSelected(null); setTableId(""); setPlantCount("1"); setNotes(""); setCreating(false)
     onRefresh()
   }
 
@@ -412,12 +452,16 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
                 <Input value={selected ? selected.name : query} onChange={(e) => { setQuery(e.target.value); setSelected(null) }} placeholder="Tapez pour rechercher..." />
               </Field>
               {showSugg && suggestions.length > 0 ? (
-                <div className="absolute z-50 mt-1 max-h-48 w-full overflow-y-auto rounded-md border border-border bg-popover shadow-md">
+                <div className="absolute z-50 mt-1 max-h-80 w-full overflow-y-auto rounded-lg border border-border bg-popover p-2 shadow-lg">
                   {suggestions.map((s) => (
-                    <div key={s.id} className="cursor-pointer px-3 py-2 text-xs hover:bg-accent hover:text-accent-foreground" onClick={() => { setSelected(s); setShowSugg(false) }}>
-                      <span className="font-medium text-foreground">{s.name}</span>
-                      <span className="ml-2 text-[10px] uppercase tracking-wide text-primary/70">{s.source}</span>
-                    </div>
+                    <button key={`${s.source}-${s.id}`} type="button" className="flex w-full gap-3 rounded-md p-2 text-left hover:bg-accent" onClick={() => { setSelected(s); setShowSugg(false) }}>
+                      {s.photoUrl ? <img src={s.photoUrl} alt="" className="size-14 rounded-md object-cover" /> : <div className="flex size-14 items-center justify-center rounded-md bg-primary/10"><Sprout className="size-5 text-primary" /></div>}
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{s.name}</span><Badge tone={s.source === "catalogue" ? "primary" : "neutral"}>{s.source === "catalogue" ? "Catalogue" : "Semis"}</Badge></span>
+                        <span className="mt-1 flex flex-wrap gap-x-2 text-[11px] text-muted-foreground">{s.obtenteur ? <span>{s.obtenteur}</span> : null}{s.type ? <span>{s.type}</span> : null}{s.color ? <span>{s.color}</span> : null}</span>
+                        {s.parents ? <span className="mt-1 block truncate text-[11px] text-muted-foreground">Parents : {s.parents}</span> : null}
+                      </span>
+                    </button>
                   ))}
                 </div>
               ) : null}
@@ -430,6 +474,24 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
                 </Select>
               </Field>
             ) : null}
+            {selected ? (
+              <Card className="mt-2 flex gap-3 border-primary/30 bg-primary/5 p-3">
+                {selected.photoUrl ? <img src={selected.photoUrl} alt={`Photo de ${selected.name}`} className="size-20 rounded-md object-cover" /> : null}
+                <div className="min-w-0 text-xs">
+                  <p className="font-medium text-foreground">{selected.name}</p>
+                  {selected.commercialName && selected.commercialName !== selected.name ? <p className="text-muted-foreground">{selected.commercialName}</p> : null}
+                  <p className="mt-1 text-muted-foreground">{[selected.obtenteur, selected.type, selected.color, selected.flowering].filter(Boolean).join(" · ") || "Fiche catalogue sélectionnée"}</p>
+                  {selected.description ? <p className="mt-1 line-clamp-2 text-muted-foreground">{selected.description}</p> : null}
+                </div>
+              </Card>
+            ) : null}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Nombre de plants"><Input type="number" min="1" value={plantCount} onChange={(e) => setPlantCount(e.target.value)} /></Field>
+            <Field label="Date d'ajout"><Input type="date" value={plantedAt} onChange={(e) => setPlantedAt(e.target.value)} /></Field>
+            <Field label={zone.kind === "parcelle" ? "Type de sol" : "Type de sol / substrat"}><Input value={soilType} onChange={(e) => setSoilType(e.target.value)} placeholder="Ex. terre argileuse, terreau" /></Field>
+            <Field label="Contenant"><Input value={containerType} onChange={(e) => setContainerType(e.target.value)} placeholder="Ex. pot en terre cuite" /></Field>
+            <div className="sm:col-span-2"><Field label="Note initiale"><Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observation à l'installation" /></Field></div>
           </div>
           <div className="mt-3 flex justify-end gap-2">
             <Button variant="ghost" size="sm" onClick={() => setCreating(false)}>Annuler</Button>
