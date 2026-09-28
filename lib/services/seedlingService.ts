@@ -107,8 +107,11 @@ export class SeedlingService {
   }
 
   /** Génère le lot immédiatement après l'enregistrement d'une récolte. */
-  registerHarvest(harvest: HipHarvest): { batch: SowingBatch; seedlings: Seedling[] } {
-    return this.sow({ hipHarvest: harvest })
+  registerHarvest(
+    harvest: HipHarvest,
+    tableId: string | null = null,
+  ): { batch: SowingBatch; seedlings: Seedling[] } {
+    return this.sow({ hipHarvest: harvest, tableId })
   }
 
   /** Met à jour un lot de semis. */

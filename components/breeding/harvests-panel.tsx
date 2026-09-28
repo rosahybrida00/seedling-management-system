@@ -9,7 +9,7 @@ import { formatDate, fromDateInput, toDateInput } from "./format"
 import type { HipHarvest } from "@/lib/domain/types"
 
 export function HarvestsPanel() {
-  const { crosses, hipHarvests, sowingBatches, cross, seedling, run } = useData()
+  const { crosses, hipHarvests, sowingBatches, greenhouses, greenhouseTables, cross, seedling, run } = useData()
   const [creating, setCreating] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
 
@@ -18,11 +18,12 @@ export function HarvestsPanel() {
     code: "",
     harvestDate: "",
     seedCount: "",
+    tableId: "",
     remarks: "",
   })
 
   function resetForm() {
-    setForm({ crossId: "", code: "", harvestDate: "", seedCount: "", remarks: "" })
+    setForm({ crossId: "", code: "", harvestDate: "", seedCount: "", tableId: "", remarks: "" })
   }
 
   function suggestCode(crossId: string) {
@@ -49,7 +50,7 @@ export function HarvestsPanel() {
       })
       // Chaque graine reçoit immédiatement un code métier (Aa1, Aa2, ...)
       // et devient disponible dans le parcours de plantation.
-      seedling.registerHarvest(harvest)
+      seedling.registerHarvest(harvest, form.tableId || null)
     })
     resetForm()
     setCreating(false)
@@ -119,6 +120,21 @@ export function HarvestsPanel() {
                 onChange={(e) => setForm({ ...form, seedCount: e.target.value })}
                 placeholder="0"
               />
+            </Field>
+            <Field label="Parcelle ou serre pour plantation" hint="Le lot sera placé dans la table sélectionnée.">
+              <Select value={form.tableId} onChange={(e) => setForm({ ...form, tableId: e.target.value })}>
+                <option value="">Choisir plus tard</option>
+                {greenhouses.map((greenhouse) => {
+                  const tables = greenhouseTables.filter((table) => table.greenhouseId === greenhouse.id)
+                  return tables.length ? (
+                    <optgroup key={greenhouse.id} label={greenhouse.name}>
+                      {tables.map((table) => (
+                        <option key={table.id} value={table.id}>{table.name}</option>
+                      ))}
+                    </optgroup>
+                  ) : null
+                })}
+              </Select>
             </Field>
             <Field label="Remarques">
               <Input value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} />
