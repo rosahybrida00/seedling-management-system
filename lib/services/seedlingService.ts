@@ -59,21 +59,42 @@ export class SeedlingService {
   }
 
   /**
-   * SEMIS : crée réellement un SowingBatch à partir d'une récolte, en copiant
-   * `harvestDate` et `seedCount`. Génère optionnellement les semis Aa1..AaN.
+   * Crée un lot de graines à partir d'une récolte.
+   * L'opération est idempotente : enregistrer deux fois la même récolte ne
+   * crée pas un second lot ni des codes Aa1..AaN en doublon.
    */
   sow(input: SowInput): { batch: SowingBatch; seedlings: Seedling[] } {
     const { hipHarvest } = input
-    const ts = nowIso()
+    const count = input.generateSeedlings ?? hipHarvest.seedCount
+    if (!Number.isInteger(count) || count < 0) {
+      throw new Error("Le nombre de graines doit être un entier positif ou zéro")
+    }
 
+    const existing = this.store
+      .getAll("sowingBatches")
+      .find((batch) => batch.hipHarvestId === hipHarvest.id)
+
+    if (existing) {
+      const existingSeedlings = this.listSeedlings(existing.id)
+      const missing = Math.max(0, count - existingSeedlings.length)
+      const seedlings = missing > 0 ? this.generateSeedlings(existing, missing) : []
+      if (existing.seedCount !== count || existing.harvestDate !== hipHarvest.harvestDate) {
+        this.updateBatch(existing.id, {
+          harvestDate: hipHarvest.harvestDate,
+          seedCount: count,
+        })
+      }
+      return { batch: { ...existing, seedCount: count, harvestDate: hipHarvest.harvestDate }, seedlings }
+    }
+
+    const ts = nowIso()
     const batch: SowingBatch = {
       id: newId(),
       hipHarvestId: hipHarvest.id,
-      code: hipHarvest.code, // code du fruit, ex. "Aa"
+      code: hipHarvest.code,
       sowingDate: input.sowingDate ?? ts,
-      // Copies explicites depuis la récolte source :
       harvestDate: hipHarvest.harvestDate,
-      seedCount: hipHarvest.seedCount,
+      seedCount: count,
       tableId: input.tableId ?? null,
       remarks: input.remarks ?? "",
       createdAt: ts,
@@ -81,12 +102,13 @@ export class SeedlingService {
     }
 
     mutate(this.store, "sowingBatches", (items) => [...items, batch])
-
-    const count = input.generateSeedlings ?? hipHarvest.seedCount
-    const seedlings =
-      count > 0 ? this.generateSeedlings(batch, count) : []
-
+    const seedlings = count > 0 ? this.generateSeedlings(batch, count) : []
     return { batch, seedlings }
+  }
+
+  /** Génère le lot immédiatement après l'enregistrement d'une récolte. */
+  registerHarvest(harvest: HipHarvest): { batch: SowingBatch; seedlings: Seedling[] } {
+    return this.sow({ hipHarvest: harvest })
   }
 
   /** Met à jour un lot de semis. */

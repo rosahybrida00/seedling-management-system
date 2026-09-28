@@ -35,22 +35,28 @@ export function HarvestsPanel() {
   }
 
   function createHarvest() {
+    const seedCount = Number(form.seedCount)
     if (!form.crossId || !form.code.trim()) return
-    run(() =>
-      cross.createHarvest({
+    if (!Number.isInteger(seedCount) || seedCount < 0) return
+
+    run(() => {
+      const harvest = cross.createHarvest({
         crossId: form.crossId,
         code: form.code,
         harvestDate: fromDateInput(form.harvestDate),
-        seedCount: Number(form.seedCount) || 0,
+        seedCount,
         remarks: form.remarks,
-      }),
-    )
+      })
+      // Chaque graine reçoit immédiatement un code métier (Aa1, Aa2, ...)
+      // et devient disponible dans le parcours de plantation.
+      seedling.registerHarvest(harvest)
+    })
     resetForm()
     setCreating(false)
   }
 
   function sow(harvest: HipHarvest) {
-    run(() => seedling.sow({ hipHarvest: harvest }))
+    run(() => seedling.registerHarvest(harvest))
   }
 
   return (
@@ -122,8 +128,16 @@ export function HarvestsPanel() {
             <Button variant="ghost" onClick={() => { setCreating(false); resetForm() }}>
               Annuler
             </Button>
-            <Button onClick={createHarvest} disabled={!form.crossId || !form.code.trim()}>
-              Créer
+            <Button
+              onClick={createHarvest}
+              disabled={
+                !form.crossId ||
+                !form.code.trim() ||
+                !Number.isInteger(Number(form.seedCount)) ||
+                Number(form.seedCount) < 0
+              }
+            >
+              Créer et générer les graines
             </Button>
           </div>
         </Card>
