@@ -32,7 +32,15 @@ create unique index if not exists uq_seedlings_user_seed_code
   on public.seedlings (user_id, seed_code) where seed_code is not null;
 
 -- ---------------------------------------------------------------------
--- 2. Le trigger de récolte (posé en migration 010 sur cross_fruits)
+-- 2. Clé nécessaire au ON CONFLICT du trigger de récolte.
+--    Sans cette contrainte, PostgreSQL refuse ON CONFLICT
+--    (fruit_id, seed_number) et l'enregistrement de la récolte échoue.
+-- ---------------------------------------------------------------------
+create unique index if not exists uq_harvested_seeds_fruit_number
+on public.harvested_seeds (fruit_id, seed_number);
+
+-- ---------------------------------------------------------------------
+-- 3. Le trigger de récolte (posé en migration 010 sur cross_fruits)
 --    alimente maintenant, en plus des graines (harvested_seeds) :
 --      - un lot de semis (sowing_batches) par fruit récolté,
 --      - un semis (seedlings) par graine, rattaché directement au
