@@ -55,8 +55,8 @@ begin
   where fruit_id = new.id and seed_number > greatest(new.seed_count, 0);
 
   if new.seed_count > 0 then
-    insert into public.harvested_seeds (user_id, fruit_id, cross_id, seed_name, seed_number, harvest_year, status, greenhouse_id, greenhouse_table_id)
-    select new.user_id, new.id, new.cross_id,
+    insert into public.harvested_seeds (id, user_id, fruit_id, cross_id, seed_name, seed_number, harvest_year, status, greenhouse_id, greenhouse_table_id)
+    select gen_random_uuid(), new.user_id, new.id, new.cross_id,
       v_clean_name || '-' || n,
       n, coalesce(new.harvest_year, extract(year from now())::integer), 'à semer',
       new.greenhouse_id, new.greenhouse_table_id
@@ -71,11 +71,11 @@ begin
   -- Pont vers la Serre : un lot de semis par fruit récolté.
   if new.seed_count > 0 then
     insert into public.sowing_batches (
-      user_id, cross_id, fruit_id, fruit_code, sowing_date, seed_count,
+      id, user_id, cross_id, fruit_id, fruit_code, sowing_date, seed_count,
       original_seed_count, table_id
     )
     values (
-      new.user_id, new.cross_id, new.id, v_clean_name,
+      gen_random_uuid(), new.user_id, new.cross_id, new.id, v_clean_name,
       coalesce(new.harvest_date, current_date),
       new.seed_count, new.seed_count, new.greenhouse_table_id
     )
@@ -91,11 +91,11 @@ begin
     );
 
     insert into public.seedlings (
-      user_id, cross_id, fruit_id, fruit_code, seed_code, code,
+      id, user_id, cross_id, fruit_id, fruit_code, seed_code, code,
       table_id, sowing_date, status, evaluation_status
     )
     select
-      new.user_id, new.cross_id, new.id, v_clean_name,
+      gen_random_uuid(), new.user_id, new.cross_id, new.id, v_clean_name,
       v_clean_name || '-' || n, v_clean_name || '-' || n,
       new.greenhouse_table_id, coalesce(new.harvest_date, current_date),
       'observing', 'Évaluation'
