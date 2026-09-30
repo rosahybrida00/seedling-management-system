@@ -14,6 +14,27 @@
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
+-- 0. Cette migration a toujours supposé un lien direct cross_id et les
+--    colonnes fruit_code / seed_code / table_id / sowing_date, déjà en
+--    place sur la production réelle mais jamais créées par les
+--    migrations 001-009 (batch_id/index). Pour que la chaîne de
+--    migrations reste rejouable sur une base vierge, on les crée ici,
+--    au même schéma que sur la production réelle.
+-- ---------------------------------------------------------------------
+alter table public.sowing_batches
+  add column if not exists cross_id uuid references public.crosses(id) on delete cascade,
+  add column if not exists fruit_code text;
+alter table public.sowing_batches
+  add column if not exists original_seed_count integer;
+
+alter table public.seedlings
+  add column if not exists cross_id uuid references public.crosses(id) on delete cascade,
+  add column if not exists fruit_code text,
+  add column if not exists seed_code text,
+  add column if not exists table_id uuid references public.greenhouse_tables(id) on delete set null,
+  add column if not exists sowing_date timestamptz;
+
+-- ---------------------------------------------------------------------
 -- 1. Colonnes de rattachement précises (fruit_id), en plus du texte
 --    fruit_code déjà en place : un identifiant stable est plus sûr
 --    qu'un rapprochement par nom pour les mises à jour et suppressions.

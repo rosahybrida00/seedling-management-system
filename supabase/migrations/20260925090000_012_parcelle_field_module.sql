@@ -1,5 +1,5 @@
 -- =====================================================================
--- 014 — Module Parcelle, plantations, observations et programmes de
+-- 012 — Module Parcelle, plantations, observations et programmes de
 --        terrain, avec intégrité stricte pour le futur moteur RAG.
 --
 -- Triptyque exigé pour chaque observation/traitement/apport :
@@ -7,8 +7,18 @@
 --   Météo Historique du Jour]
 -- Ce triptyque est porté par `field_plantings` (variété/semis + lieu),
 -- et chaque observation/programme s'y rattache obligatoirement avec une
--- date. La météo du jour se résout via `weather_daily` (migration 013)
+-- date. La météo du jour se résout via `weather_daily` (migration 011)
 -- sur cette date — elle n'est pas dupliquée dans chaque table.
+--
+-- Fusionne ce qui était à l'origine deux migrations distinctes
+-- (« 014_parcelle_field_module » et « 014_parcelles_integrite_rag »,
+-- portant toutes deux le même numéro et redéfinissant partiellement
+-- `parcelles`) et « 015_field_observatory » (qui redéfinissait
+-- entièrement `field_observations` avec un schéma incompatible). La
+-- table `field_observations` réunit ici les deux usages : un relevé
+-- rattaché à une plantation (page Parcelle) ou un relevé libre de
+-- l'Observatoire terrain (variété/semis + serre/parcelle + météo du
+-- jour, sans plantation).
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -22,7 +32,12 @@ create table if not exists public.parcelles (
   location text,
   latitude numeric,
   longitude numeric,
-  created_at timestamptz not null default now()
+  city text,
+  soil_notes text,
+  area_m2 numeric check (area_m2 is null or area_m2 > 0),
+  remarks text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
 
 alter table public.parcelles enable row level security;
@@ -30,6 +45,9 @@ drop policy if exists "own_parcelles" on public.parcelles;
 create policy "own_parcelles" on public.parcelles
   for all to authenticated
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create index if not exists idx_parcelles_user on public.parcelles (user_id);
+
+comment on table public.parcelles is 'Localisation plein air, sol et historique cultural de l''utilisateur.';
 
 -- ---------------------------------------------------------------------
 -- 2. field_plantings : quelle variété (Catalogue ou Semis) est en place
@@ -72,35 +90,76 @@ create policy "own_field_plantings" on public.field_plantings
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------
--- 3. field_observations : la grille quotidienne, cases à cocher
---    uniquement (remarque = seule exception en texte libre, cf. règle
---    globale de l'appli). Toujours rattachée à une plantation, donc au
---    triptyque variété + lieu ; la météo du jour se résout sur
---    observation_date via weather_daily.
+-- 3. field_observations : la grille quotidienne d'une plantation
+--    (cases à cocher, remarque en texte libre), OU un relevé libre de
+--    l'Observatoire terrain (variété/semis + serre/parcelle + météo du
+--    jour, sans plantation). Exactement un des deux modes.
 -- ---------------------------------------------------------------------
 create table if not exists public.field_observations (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  planting_id uuid not null references public.field_plantings(id) on delete cascade,
-  observation_date date not null default current_date,
-  intervention_date date,
+
+  -- Mode « plantation » (page Parcelle) :
+  planting_id uuid references public.field_plantings(id) on delete cascade,
   disease_pressure text[] not null default '{}',
   pests text[] not null default '{}',
   climate_behavior text[] not null default '{}',
   treatment_applied text[] not null default '{}',
   treatment_reaction text[] not null default '{}',
   remarque text not null default '',
-  created_at timestamptz not null default now()
+
+  -- Mode « Observatoire terrain » (page Serre) :
+  seedling_id uuid references public.seedlings(id) on delete cascade,
+  variety_id uuid references public.varieties(id) on delete set null,
+  greenhouse_id uuid references public.greenhouses(id) on delete cascade,
+  parcelle_id uuid references public.parcelles(id) on delete cascade,
+  weather_daily_id uuid references public.weather_daily(id) on delete restrict,
+  observations text[] not null default '{}',
+  notes text not null default '',
+  intervention_passes integer,
+  intervention_result text,
+
+  -- Commun aux deux modes :
+  observation_date date not null default current_date,
+  intervention_date date,
+  created_at timestamptz not null default now(),
+
+  constraint field_observations_dates_check check (
+    intervention_date is null or intervention_date >= observation_date
+  ),
+  constraint field_observations_passes_check check (
+    intervention_passes is null or intervention_passes > 0
+  ),
+  constraint field_observations_result_check check (
+    intervention_result is null
+    or intervention_result in ('Amélioration', 'Stationnaire', 'Échec')
+  ),
+  -- Soit un relevé de plantation, soit un relevé d'observatoire complet :
+  -- sujet (variété XOR semis), emplacement (serre XOR parcelle) et météo
+  -- du jour renseignés.
+  constraint field_observations_source_check check (
+    planting_id is not null
+    or (
+      ((seedling_id is not null) <> (variety_id is not null))
+      and ((greenhouse_id is not null) <> (parcelle_id is not null))
+      and weather_daily_id is not null
+    )
+  )
 );
 
 create index if not exists idx_field_observations_planting on public.field_observations (planting_id);
 create index if not exists idx_field_observations_date on public.field_observations (observation_date);
+create index if not exists idx_field_observations_rag
+  on public.field_observations (user_id, observation_date, weather_daily_id);
 
 alter table public.field_observations enable row level security;
 drop policy if exists "own_field_observations" on public.field_observations;
 create policy "own_field_observations" on public.field_observations
   for all to authenticated
   using (auth.uid() = user_id) with check (auth.uid() = user_id);
+
+comment on table public.field_observations is
+  'Relevé de plantation (planting_id) ou relevé libre de l''Observatoire terrain (variété/semis + serre/parcelle + météo du jour).';
 
 -- ---------------------------------------------------------------------
 -- 4. field_programs : programmes collectifs/curatifs et plans de
@@ -139,13 +198,23 @@ create policy "own_field_programs" on public.field_programs
 -- ---------------------------------------------------------------------
 -- 5. Rattacher les lots de croisement à une Parcelle, au même titre
 --    qu'à une table de serre (jusqu'ici, `location`/`containers` en
---    texte libre — remplacés par un choix réel).
+--    texte libre — remplacés par un choix réel), ainsi qu'à la météo
+--    du jour pour les croisements réalisés en plein air.
 -- ---------------------------------------------------------------------
 alter table public.crosses
   add column if not exists greenhouse_table_id uuid references public.greenhouse_tables(id) on delete set null,
-  add column if not exists parcelle_id uuid references public.parcelles(id) on delete set null;
+  add column if not exists parcelle_id uuid references public.parcelles(id) on delete set null,
+  add column if not exists location_kind text,
+  add column if not exists weather_daily_id uuid references public.weather_daily(id) on delete restrict;
 
 alter table public.crosses drop constraint if exists crosses_one_field_location;
 alter table public.crosses add constraint crosses_one_field_location check (
   greenhouse_table_id is null or parcelle_id is null
 );
+
+alter table public.crosses drop constraint if exists crosses_location_kind_check;
+alter table public.crosses add constraint crosses_location_kind_check check (
+  location_kind is null or location_kind in ('greenhouse', 'parcelle')
+);
+
+create index if not exists idx_crosses_rag_chain on public.crosses (user_id, parcelle_id, weather_daily_id);
