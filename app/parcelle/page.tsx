@@ -580,6 +580,35 @@ function PlantView({ planting, label, observations, programs, interventionsByPro
       <button onClick={onBack} className="flex w-fit items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground"><ArrowLeft className="size-4" /> Retour</button>
       <h2 className="font-serif text-xl text-foreground">{label}</h2>
 
+      <Card className="p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <h3 className="font-medium text-foreground">Détails de l&apos;ajout terrain</h3>
+            <p className="text-xs text-muted-foreground">Ces informations restent uniquement dans cette serre ou parcelle.</p>
+          </div>
+          <Badge tone="neutral">Serre / parcelle</Badge>
+        </div>
+        <div className="grid gap-x-6 gap-y-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <p className="text-xs text-muted-foreground">Quantité en possession</p>
+            <p className="font-medium text-foreground">{planting.plant_count ?? 1} plant{(planting.plant_count ?? 1) > 1 ? "s" : ""}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Date d&apos;ajout</p>
+            <p className="font-medium text-foreground">{formatDate(planting.planted_at)}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Sol / substrat</p>
+            <p className="font-medium text-foreground">{planting.soil_type || "Non renseigné"}</p>
+          </div>
+          <div>
+            <p className="text-xs text-muted-foreground">Contenant</p>
+            <p className="font-medium text-foreground">{planting.container_type || "Non renseigné"}</p>
+          </div>
+        </div>
+        {planting.notes ? <div className="mt-3 border-t border-border pt-3"><p className="text-xs text-muted-foreground">Note d&apos;installation</p><p className="mt-1 text-sm text-foreground">{planting.notes}</p></div> : null}
+      </Card>
+
       <div className="flex gap-2">
         <button onClick={() => setTab("historique")} className={tab === "historique" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}><CalendarClock className="size-4" /> Historique</button>
         <button onClick={() => setTab("agenda")} className={tab === "agenda" ? "flex items-center gap-1.5 rounded-md bg-primary/10 px-4 py-2 text-sm font-medium text-primary" : "flex items-center gap-1.5 rounded-md px-4 py-2 text-sm text-muted-foreground hover:bg-muted"}><ClipboardList className="size-4" /> Agenda</button>
