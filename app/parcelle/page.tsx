@@ -41,6 +41,9 @@ interface VarietyOption {
   parents?: string | null
   description?: string | null
   photoUrl?: string | null
+  photos?: string[]
+  adrLabel?: boolean | null
+  registrationName?: string | null
   source: "catalogue" | "semis"
 }
 
@@ -393,14 +396,24 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
     const timer = setTimeout(async () => {
       const escaped = q.replace(/[%,()]/g, " ")
       const [{ data: v }, { data: s }] = await Promise.all([
-        supabase.from("varieties").select("id,name,commercial_name,obtenteur,type,color,flowering,fragrance,parents,parentage,description,photo_url,image_url").or(`name.ilike.%${escaped}%,commercial_name.ilike.%${escaped}%,obtenteur.ilike.%${escaped}%`).limit(8),
+        supabase.from("varieties").select("id,name,commercial_name,registration_name,obtenteur,type,color,flowering,fragrance,parents,parentage,description,photo_url,image_url,adr_label").or(`name.ilike.%${escaped}%,commercial_name.ilike.%${escaped}%,obtenteur.ilike.%${escaped}%`).limit(8),
         supabase.from("seedlings").select("id,code,seedling_code").or(`code.ilike.%${escaped}%,seedling_code.ilike.%${escaped}%`).limit(8),
       ])
+      const varietyIds = (v ?? []).map((x: any) => x.id)
+      const { data: photoRows } = varietyIds.length
+        ? await supabase.from("varieties_photos").select("variety_id,photo_url,is_primary").in("variety_id", varietyIds).order("is_primary", { ascending: false })
+        : { data: [] }
+      const photosByVariety = new Map<string, string[]>()
+      ;(photoRows ?? []).forEach((photo: any) => {
+        if (!photo.photo_url) return
+        photosByVariety.set(photo.variety_id, [...(photosByVariety.get(photo.variety_id) ?? []), photo.photo_url])
+      })
       setSuggestions([
         ...(v ?? []).map((x: any) => ({
           id: x.id,
           name: x.commercial_name || x.name,
           commercialName: x.commercial_name,
+          registrationName: x.registration_name,
           obtenteur: x.obtenteur,
           type: x.type,
           color: x.color,
@@ -408,7 +421,9 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
           fragrance: x.fragrance,
           parents: x.parents || x.parentage,
           description: x.description,
-          photoUrl: x.photo_url || x.image_url,
+          photoUrl: x.photo_url || x.image_url || photosByVariety.get(x.id)?.[0],
+          photos: photosByVariety.get(x.id) ?? [],
+          adrLabel: x.adr_label,
           source: "catalogue" as const,
         })),
         ...(s ?? []).map((x: any) => ({ id: x.id, name: x.seedling_code || x.code, source: "semis" as const })),
@@ -476,14 +491,23 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
               </Field>
             ) : null}
             {selected ? (
-              <Card className="mt-2 flex gap-3 border-primary/30 bg-primary/5 p-3">
-                {selected.photoUrl ? <img src={selected.photoUrl} alt={`Photo de ${selected.name}`} className="size-20 rounded-md object-cover" /> : null}
-                <div className="min-w-0 text-xs">
-                  <p className="font-medium text-foreground">{selected.name}</p>
-                  {selected.commercialName && selected.commercialName !== selected.name ? <p className="text-muted-foreground">{selected.commercialName}</p> : null}
-                  <p className="mt-1 text-muted-foreground">{[selected.obtenteur, selected.type, selected.color, selected.flowering].filter(Boolean).join(" · ") || "Fiche catalogue sélectionnée"}</p>
-                  {selected.description ? <p className="mt-1 line-clamp-2 text-muted-foreground">{selected.description}</p> : null}
+              <Card className="mt-2 border-primary/30 bg-primary/5 p-3">
+                <div className="flex gap-3">
+                  {selected.photoUrl ? <img src={selected.photoUrl} alt={`Photo de ${selected.name}`} className="size-24 shrink-0 rounded-md object-cover" /> : <div className="flex size-24 shrink-0 items-center justify-center rounded-md bg-primary/10"><Sprout className="size-7 text-primary" /></div>}
+                  <div className="min-w-0 text-xs">
+                    <div className="flex flex-wrap items-center gap-2"><p className="font-medium text-foreground">{selected.name}</p>{selected.adrLabel ? <Badge tone="primary">ADR</Badge> : null}</div>
+                    {selected.commercialName && selected.commercialName !== selected.name ? <p className="text-muted-foreground">Nom commercial : {selected.commercialName}</p> : null}
+                    {selected.registrationName ? <p className="text-muted-foreground">Dénomination : {selected.registrationName}</p> : null}
+                    <p className="mt-1 text-muted-foreground">{[selected.obtenteur, selected.type, selected.color].filter(Boolean).join(" · ") || "Fiche catalogue"}</p>
+                  </div>
                 </div>
+                <div className="mt-3 grid gap-x-4 gap-y-1 border-t border-primary/15 pt-3 text-xs sm:grid-cols-2">
+                  {selected.flowering ? <p><span className="font-medium text-foreground">Floraison :</span> <span className="text-muted-foreground">{selected.flowering}</span></p> : null}
+                  {selected.fragrance ? <p><span className="font-medium text-foreground">Parfum :</span> <span className="text-muted-foreground">{selected.fragrance}</span></p> : null}
+                  {selected.parents ? <p className="sm:col-span-2"><span className="font-medium text-foreground">Parentage :</span> <span className="text-muted-foreground">{selected.parents}</span></p> : null}
+                </div>
+                {selected.description ? <p className="mt-2 text-xs text-muted-foreground">{selected.description}</p> : null}
+                {(selected.photos?.length ?? 0) > 1 ? <div className="mt-3 flex gap-2 overflow-x-auto">{selected.photos?.slice(0, 6).map((photo) => <img key={photo} src={photo} alt={`Photo de ${selected.name}`} className="size-14 shrink-0 rounded-md object-cover" />)}</div> : null}
               </Card>
             ) : null}
           </div>
@@ -515,7 +539,7 @@ function ZoneView({ zone, plantings, greenhouses, tables, parcelles, plantingLab
                   <Sprout className="size-4 text-primary" />
                   <span className="text-sm font-medium">{plantingLabel(p)}</span>
                 </div>
-                <p className="text-xs text-muted-foreground">Planté le {formatDate(p.planted_at)}</p>
+                <p className="text-xs text-muted-foreground">{p.plant_count ?? 1} plant{(p.plant_count ?? 1) > 1 ? "s" : ""} · ajouté le {formatDate(p.planted_at)}</p>
               </button>
             )
           })}
